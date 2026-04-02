@@ -354,7 +354,52 @@ echo "https://$HOST"
 az functionapp function keys list --name "$FUNC_NAME" --resource-group "$RG" --function-name chat --query default -o tsv
 ```
 
-Use these values to populate `@baseUrl` and `@defaultKey` in `test/test.cloud.http`.
+Store these values in a `.env` file at the workspace root for use with `test/test.cloud.http` and the terminal snippets below:
+
+```bash
+BASE_URL=https://<your-app>.azurewebsites.net
+FUNCTION_KEY=<your-chat-function-key>
+```
+
+> `.env` is gitignored by default — never commit secrets.
+
+### Formatted Terminal Output with glow
+
+The agent's `response` field contains Markdown. You can render it directly in the terminal using [`glow`](https://github.com/charmbracelet/glow) and [`jq`](https://jqlang.org):
+
+```bash
+# Install dependencies (macOS)
+brew install glow jq
+```
+
+```bash
+# Source your .env and call the agent
+source .env && curl -s -X POST "$BASE_URL/agent/chat?code=$FUNCTION_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "What is the price of a Standard D4s v5 VM in East US?"}' \
+  | jq -r '.response' \
+  | glow -
+```
+
+For multi-turn conversations, capture the `session_id` from the first response and pass it via `x-ms-session-id`:
+
+```bash
+source .env
+
+# Start a session
+SESSION_ID=$(curl -s -X POST "$BASE_URL/agent/chat?code=$FUNCTION_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "What is the price of a Standard D4s v5 VM in East US?"}' \
+  | jq -r '.session_id')
+
+# Follow up in the same session
+curl -s -X POST "$BASE_URL/agent/chat?code=$FUNCTION_KEY" \
+  -H "Content-Type: application/json" \
+  -H "x-ms-session-id: $SESSION_ID" \
+  -d '{"prompt": "If I run that VM 24/7 for a month, what would it cost?"}' \
+  | jq -r '.response' \
+  | glow -
+```
 
 ## Known Limitations
 

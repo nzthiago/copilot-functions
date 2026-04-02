@@ -5,8 +5,8 @@ param tags object = {}
 param applicationInsightsName string = ''
 param appServicePlanId string
 param appSettings object = {}
-param runtimeName string 
-param runtimeVersion string 
+param runtimeName string
+param runtimeVersion string
 param serviceName string = 'api'
 param storageAccountName string
 param deploymentStorageContainerName string
@@ -32,10 +32,10 @@ var baseAppSettings = {
   // Only include required credential settings unconditionally
   AzureWebJobsStorage__credential: 'managedidentity'
   AzureWebJobsStorage__clientId: identityClientId
-  
+
   // Application Insights settings are always included
   APPLICATIONINSIGHTS_AUTHENTICATION_STRING: applicationInsightsIdentity
-  APPLICATIONINSIGHTS_CONNECTION_STRING: applicationInsights.properties.ConnectionString
+  APPLICATIONINSIGHTS_CONNECTION_STRING: applicationInsights!.properties.ConnectionString
 }
 
 // Dynamically build storage endpoint settings based on feature flags
@@ -84,7 +84,7 @@ module api 'br/public:avm/res/web/site:0.15.1' = {
           value: '${stg.properties.primaryEndpoints.blob}${deploymentStorageContainerName}'
           authentication: {
             type: identityType == 'SystemAssigned' ? 'SystemAssignedIdentity' : 'UserAssignedIdentity'
-            userAssignedIdentityResourceId: identityType == 'UserAssigned' ? identityId : '' 
+            userAssignedIdentityResourceId: identityType == 'UserAssigned' ? identityId : ''
           }
         }
       }

@@ -1,23 +1,25 @@
 ### Cloud Testing for Microsoft Expert Agent
 ### Deployed to Azure Functions
+### BASE_URL and FUNCTION_KEY loaded from .env (gitignored)
 
-@baseUrl = 
-@defaultKey = 
+@baseUrl = {{$dotenv BASE_URL}}
+@functionKey = {{$dotenv FUNCTION_KEY}}
 
 ### ============================================
 ### CHAT ENDPOINT
 ### ============================================
 
 ### Chat - Foundry question
-POST {{baseUrl}}/agent/chat?code={{defaultKey}}
+POST {{baseUrl}}/agent/chat?code={{functionKey}}
 Content-Type: application/json
 
 {
     "prompt": "What's the difference between classic and new foundry?"
 }
 
-### Chat - Azure pricing question
-POST {{baseUrl}}/agent/chat?code={{defaultKey}}
+### Chat - Azure pricing question (session auto-captured)
+# @name pricingChat
+POST {{baseUrl}}/agent/chat?code={{functionKey}}
 Content-Type: application/json
 
 {
@@ -25,47 +27,26 @@ Content-Type: application/json
 }
 
 ### Chat - Azure cost calculation
-POST {{baseUrl}}/agent/chat?code={{defaultKey}}
+POST {{baseUrl}}/agent/chat?code={{functionKey}}
 Content-Type: application/json
 
 {
     "prompt": "If I run 10 million executions per month of Azure Functions, what would that cost annually?"
 }
 
-### Note the session_id in the response body and x-ms-session-id response header
+### ============================================
+### MULTI-TURN CONVERSATION
+### ============================================
+### session_id is captured automatically from the pricingChat response above
+### Run the pricingChat request first, then run this one
 
-@sessionId = <previous-session-id>
+@sessionId = {{pricingChat.response.body.$.session_id}}
 
-### Step 2: Resume the same session to continue the conversation
-POST {{baseUrl}}/agent/chat?code={{defaultKey}}
+### Follow-up in the same session (no manual copy-paste needed)
+POST {{baseUrl}}/agent/chat?code={{functionKey}}
 Content-Type: application/json
 x-ms-session-id: {{sessionId}}
 
 {
-    "prompt": "What have we been discussing so far?"
+    "prompt": "If I run that VM 24/7 for a month, what would it cost?"
 }
-
-### ============================================
-### TIPS FOR GETTING FUNCTION KEYS
-### ============================================
-###
-### Option 1: Azure Portal
-###   1. Go to your Function App
-###   2. Click "Functions" in left menu
-###   3. Click on a specific function (e.g., "chat")
-###   4. Click "Function Keys"
-###   5. Copy the "default" key or create a new one
-###
-### Option 2: Azure CLI
-###   az functionapp function keys list \
-###     --name func-api-5ajf7sx2upvno \
-###     --resource-group <your-resource-group> \
-###     --function-name chat
-###
-### Option 3: Azure Functions Core Tools
-###   func azure functionapp list-functions vameru-ghcp-sdk-test --show-keys
-###
-### Option 4: Use Host Key (master key for all functions)
-###   Found in: Portal > Function App > App Keys > _master
-###   ⚠️  Not recommended for production - use function-specific keys
-###

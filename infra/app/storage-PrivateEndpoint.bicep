@@ -49,7 +49,7 @@ module blobPrivateEndpoint 'br/public:avm/res/network/private-endpoint:0.11.0' =
       privateDnsZoneGroupConfigs: [
         {
           name: 'storageBlobARecord'
-          privateDnsZoneResourceId: enableBlob ? privateDnsZoneBlobDeployment.outputs.resourceId : ''
+          privateDnsZoneResourceId: enableBlob ? privateDnsZoneBlobDeployment!.outputs.resourceId : ''
         }
       ]
     }
@@ -82,7 +82,7 @@ module queuePrivateEndpoint 'br/public:avm/res/network/private-endpoint:0.11.0' 
       privateDnsZoneGroupConfigs: [
         {
           name: 'storageQueueARecord'
-          privateDnsZoneResourceId: enableQueue ? privateDnsZoneQueueDeployment.outputs.resourceId : ''
+          privateDnsZoneResourceId: enableQueue ? privateDnsZoneQueueDeployment!.outputs.resourceId : ''
         }
       ]
     }
@@ -115,7 +115,7 @@ module tablePrivateEndpoint 'br/public:avm/res/network/private-endpoint:0.11.0' 
       privateDnsZoneGroupConfigs: [
         {
           name: 'storageTableARecord'
-          privateDnsZoneResourceId: enableTable ? privateDnsZoneTableDeployment.outputs.resourceId : ''
+          privateDnsZoneResourceId: enableTable ? privateDnsZoneTableDeployment!.outputs.resourceId : ''
         }
       ]
     }
@@ -204,7 +204,7 @@ module filePrivateEndpoint 'br/public:avm/res/network/private-endpoint:0.11.0' =
       privateDnsZoneGroupConfigs: [
         {
           name: 'storageFileARecord'
-          privateDnsZoneResourceId: enableFile ? privateDnsZoneFileDeployment.outputs.resourceId : ''
+          privateDnsZoneResourceId: enableFile ? privateDnsZoneFileDeployment!.outputs.resourceId : ''
         }
       ]
     }

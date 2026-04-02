@@ -179,7 +179,7 @@ module api './app/api.bicep' = {
         COPILOT_MODEL: selectedModelName
       } : {}
     )
-    virtualNetworkSubnetId: vnetEnabled ? serviceVirtualNetwork.outputs.appSubnetID : ''
+    virtualNetworkSubnetId: vnetEnabled ? serviceVirtualNetwork!.outputs.appSubnetID : ''
   }
 }
 
@@ -255,7 +255,7 @@ module storagePrivateEndpoint './app/storage-PrivateEndpoint.bicep' = if (vnetEn
     location: location
     tags: tags
     virtualNetworkName: !empty(vNetName) ? vNetName : '${abbrs.networkVirtualNetworks}${resourceToken}'
-    subnetName: vnetEnabled ? serviceVirtualNetwork.outputs.peSubnetName : '' // Keep conditional check for safety, though module won't run if !vnetEnabled
+    subnetName: vnetEnabled ? serviceVirtualNetwork!.outputs.peSubnetName : '' // Keep conditional check for safety, though module won't run if !vnetEnabled
     resourceName: storage.outputs.name
     enableBlob: storageEndpointConfig.enableBlob
     enableQueue: storageEndpointConfig.enableQueue
@@ -275,7 +275,7 @@ module logAnalytics 'br/public:avm/res/operational-insights/workspace:0.7.0' = {
     dataRetention: 30
   }
 }
- 
+
 module monitoring 'br/public:avm/res/insights/component:0.4.1' = {
   name: '${uniqueString(deployment().name, location)}-appinsights'
   scope: rg
