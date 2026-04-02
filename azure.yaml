@@ -4,11 +4,19 @@ name: functions-markdown-agent
 version: 0.1.0
 hooks:
   prepackage:
-    shell: sh
-    run: ./infra/hooks/prepackage.sh
+    windows:
+      shell: pwsh
+      run: ./infra/hooks/prepackage.ps1
+    posix:
+      shell: sh
+      run: ./infra/hooks/prepackage.sh
   postpackage:
-    shell: sh
-    run: rm -rf ./infra/tmp
+    windows:
+      shell: pwsh
+      run: Remove-Item -Recurse -Force ./infra/tmp -ErrorAction SilentlyContinue
+    posix:
+      shell: sh
+      run: rm -rf ./infra/tmp
 services:
   api:
     project: ./infra/tmp
