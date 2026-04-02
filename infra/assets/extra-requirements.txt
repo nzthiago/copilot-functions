@@ -11,3 +11,10 @@ pydantic>=2.0.0
 python-frontmatter>=1.1.0
 
 azurefunctions-extensions-http-fastapi
+
+# Azure connector tools (ARM API client)
+aiohttp>=3.9.0
+azure-identity>=1.15.0
+
+# Azure Functions connector triggers
+https://github.com/anthonychu/azure-functions-connectors-python/releases/download/v0.1.0b2/azure_functions_connectors-0.1.0b2-py3-none-any.whl

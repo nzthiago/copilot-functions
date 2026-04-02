@@ -15,6 +15,8 @@ This repo demonstrates an experimental new runtime that lets you deploy the same
 - Built-in single-page chat UI
 - Automatic session persistence with Azure Files
 - Run prompts on a schedule using timer triggers
+- Trigger agents from external events like Teams channel messages using Azure connector triggers
+- Dynamically generate tools from Azure API Connections (connectors)
 - Give your agent custom tools written in plain Python
 
 **Hosting your agent in Azure Functions**
@@ -105,9 +107,13 @@ When running in Azure, agent sessions are automatically persisted to an Azure Fi
 
 Locally, sessions are stored in `~/.copilot/session-state/`.
 
-## Timer Triggers from `AGENTS.md` Frontmatter
+## Triggers from `AGENTS.md` Frontmatter
 
-You can define scheduled agent runs directly in `src/AGENTS.md` frontmatter using a `functions` array.
+You can define event-driven agent runs directly in `src/AGENTS.md` frontmatter using a `functions` array. The agent supports multiple trigger types:
+
+### Timer Triggers
+
+Run your agent on a schedule:
 
 ```yaml
 ---
@@ -120,22 +126,75 @@ functions:
 ---
 ```
 
-Current behavior:
-
-- Only `trigger: timer` is supported right now. Other trigger types are explicitly rejected at startup.
-- `functions` section is optional.
 - `schedule` and `prompt` are required for timer entries.
 - `name` is optional (a safe unique name is generated if omitted).
 - `logger` is optional and defaults to `true`.
 
-When `logger: true`, the timer logs full agent output via `logging.info`, including:
+### Connector Triggers (Teams Channel Messages)
 
-- `session_id`
-- final `response`
-- `response_intermediate`
-- `tool_calls`
+Trigger your agent when a new message appears in a Microsoft Teams channel:
 
-Timer functions are registered at startup from frontmatter and run in the same runtime as `/agent/chat`.
+```yaml
+---
+functions:
+  - name: teams_chat_agent
+    trigger: teams_new_channel_message
+    connection_id: /subscriptions/.../providers/Microsoft.Web/connections/teams
+    team_id: <team-guid>
+    channel_id: <channel-id>
+    min_interval: 30    # optional: seconds between polls when active (default: 60)
+    max_interval: 120   # optional: max seconds between polls when idle (default: 300)
+    logger: true
+---
+```
+
+- `connection_id` is the ARM resource ID of an authenticated Azure API Connection for the Teams connector.
+- `team_id` and `channel_id` identify the Teams channel to monitor.
+- `min_interval` (optional, default: 60) — polling interval in seconds after items are found (fastest rate).
+- `max_interval` (optional, default: 300) — maximum polling interval in seconds when idle (backoff cap).
+- All string values support `%ENV_VAR%` or `$ENV_VAR` syntax for environment variable substitution.
+- When the trigger fires, the full Teams message JSON payload is passed as the prompt to the agent.
+
+The connector trigger uses the [azure-functions-connectors](https://github.com/anthonychu/azure-functions-connectors-python) package, which polls the connector for new items and dispatches them via Azure Storage Queues.
+
+**Prerequisites for connector triggers:**
+
+1. An Azure API Connection resource (e.g., Teams) — created and authenticated via Azure Portal or CLI
+2. The function app's managed identity must have `Microsoft.Web/connections/dynamicInvoke/action` and `Microsoft.Web/connections/read` permissions on the connection (Contributor or a custom role)
+3. `AZURE_CLIENT_ID` app setting must be set to the managed identity's client ID (automatically configured by the included Bicep templates)
+4. Azure Storage Queue and Table endpoints must be enabled (automatically configured by the included Bicep templates)
+
+### Common Behavior
+
+- `functions` section is optional.
+- `name` is optional for all trigger types (a safe unique name is generated if omitted).
+- `logger` defaults to `true`. When enabled, the agent's full output is logged including `session_id`, `response`, `response_intermediate`, and `tool_calls`.
+- All trigger functions are registered at startup from frontmatter and run in the same runtime as `/agent/chat`.
+
+## Dynamic Tools from Azure Connectors
+
+You can give your agent tools that are dynamically discovered from Azure API Connections (managed connectors). Add a `tools_from_connections` section to your `AGENTS.md` frontmatter:
+
+```yaml
+---
+tools_from_connections:
+  - connection_id: /subscriptions/.../providers/Microsoft.Web/connections/teams
+  - connection_id: /subscriptions/.../providers/Microsoft.Web/connections/office365
+---
+```
+
+At startup (on first request), the runtime:
+
+1. Fetches each connection's metadata and Swagger/OpenAPI spec from the ARM API
+2. Parses all non-trigger, non-deprecated operations into tool definitions
+3. Registers them as Copilot SDK tools with parameter schemas and descriptions
+4. Each tool invokes its connector action via the ARM `dynamicInvoke` API
+
+For example, a Teams connector generates ~30 tools including `teams_post_message_to_conversation`, `teams_reply_with_message_to_conversation`, `teams_create_channel`, `teams_list_members`, and more.
+
+**Prerequisites:** Same RBAC and identity requirements as connector triggers (see above).
+
+Connector tools are cached for the lifetime of the function app instance. If a connection fails to load, it logs a warning and continues with remaining connections.
 
 ## Building Custom Tools with Python
 

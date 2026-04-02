@@ -169,6 +169,7 @@ module api './app/api.bicep' = {
         ENABLE_MULTIPLATFORM_BUILD: 'true'
         PYTHON_ENABLE_INIT_INDEXING: '1'
         AzureWebJobsDisableHomepage: 'true'
+        AZURE_CLIENT_ID: apiUserAssignedIdentity.outputs.clientId
       },
       deployFoundry ? {
         AZURE_AI_FOUNDRY_ENDPOINT: foundryOpenAIEndpoint
@@ -217,8 +218,8 @@ module storage 'br/public:avm/res/storage/storage-account:0.8.3' = {
 // Define the configuration object locally to pass to the modules
 var storageEndpointConfig = {
   enableBlob: true  // Required for AzureWebJobsStorage, .zip deployment, Event Hubs trigger and Timer trigger checkpointing
-  enableQueue: false  // Required for Durable Functions and MCP trigger
-  enableTable: false  // Required for Durable Functions and OpenAI triggers and bindings
+  enableQueue: true  // Required for Durable Functions, MCP trigger, and connector triggers
+  enableTable: true  // Required for Durable Functions, OpenAI triggers and bindings, and connector trigger state
   enableFiles: true    // Required for session state file share mount
   allowUserIdentityPrincipal: true   // Allow interactive user identity to access for testing and debugging
 }

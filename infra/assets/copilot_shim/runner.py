@@ -10,6 +10,7 @@ import frontmatter
 
 from .client_manager import CopilotClientManager, _is_byok_mode
 from .config import resolve_config_dir, session_exists
+from .connector_tool_cache import get_connector_tools
 from .mcp import get_cached_mcp_servers
 from .skills import resolve_session_directory_for_skills
 from .tools import _REGISTERED_TOOLS_CACHE
@@ -67,11 +68,15 @@ def _build_session_kwargs(
     config_dir: Optional[str] = None,
     session_id: Optional[str] = None,
     streaming: bool = False,
+    extra_tools: Optional[list] = None,
 ) -> Dict[str, Any]:
+    all_tools = list(_REGISTERED_TOOLS_CACHE)
+    if extra_tools:
+        all_tools.extend(extra_tools)
     kwargs: Dict[str, Any] = {
         "model": model,
         "streaming": streaming,
-        "tools": _REGISTERED_TOOLS_CACHE,
+        "tools": all_tools,
         "system_message": {"mode": "replace", "content": _AGENTS_MD_CONTENT_CACHE},
         "on_permission_request": _default_permission_handler,
     }
@@ -114,11 +119,15 @@ def _build_resume_kwargs(
     model: str = DEFAULT_MODEL,
     config_dir: Optional[str] = None,
     streaming: bool = False,
+    extra_tools: Optional[list] = None,
 ) -> Dict[str, Any]:
+    all_tools = list(_REGISTERED_TOOLS_CACHE)
+    if extra_tools:
+        all_tools.extend(extra_tools)
     kwargs: Dict[str, Any] = {
         "model": model,
         "streaming": streaming,
-        "tools": _REGISTERED_TOOLS_CACHE,
+        "tools": all_tools,
         "system_message": {"mode": "replace", "content": _AGENTS_MD_CONTENT_CACHE},
         "on_permission_request": _default_permission_handler,
     }
@@ -157,16 +166,19 @@ async def run_copilot_agent(
     config_dir = resolve_config_dir()
     client = await CopilotClientManager.get_client()
 
+    # Discover connector tools (lazy-init, cached after first call)
+    connector_tools = await get_connector_tools()
+
     # Resume existing session or create a new one
     if session_id and session_exists(config_dir, session_id):
         logging.info(f"Resuming existing session: {session_id}")
-        resume_kwargs = _build_resume_kwargs(model=model, config_dir=config_dir)
+        resume_kwargs = _build_resume_kwargs(model=model, config_dir=config_dir, extra_tools=connector_tools)
         session = await client.resume_session(session_id, **resume_kwargs)
     else:
         if session_id:
             logging.info(f"Creating new session with provided ID: {session_id}")
         session_kwargs = _build_session_kwargs(
-            model=model, config_dir=config_dir, session_id=session_id, streaming=streaming
+            model=model, config_dir=config_dir, session_id=session_id, streaming=streaming, extra_tools=connector_tools
         )
         session = await client.create_session(**session_kwargs)
 
@@ -304,15 +316,17 @@ async def run_copilot_agent_stream(
             logging.error(f"[stream] Session error: {error_msg}")
             queue.put_nowait({"type": "error", "content": error_msg})
 
+    connector_tools = await get_connector_tools()
+
     if session_id and session_exists(config_dir, session_id):
         logging.info(f"[stream] Resuming existing session: {session_id}")
-        resume_kwargs = _build_resume_kwargs(model=model, config_dir=config_dir, streaming=True)
+        resume_kwargs = _build_resume_kwargs(model=model, config_dir=config_dir, streaming=True, extra_tools=connector_tools)
         session = await client.resume_session(session_id, **resume_kwargs, on_event=on_event)
     else:
         if session_id:
             logging.info(f"[stream] Creating new session with provided ID: {session_id}")
         session_kwargs = _build_session_kwargs(
-            model=model, config_dir=config_dir, session_id=session_id, streaming=True
+            model=model, config_dir=config_dir, session_id=session_id, streaming=True, extra_tools=connector_tools
         )
         session = await client.create_session(**session_kwargs, on_event=on_event)
 

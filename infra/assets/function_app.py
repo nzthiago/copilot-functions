@@ -11,7 +11,8 @@ from typing import Any, Dict, List
 
 import azure.functions as func
 import frontmatter
-from copilot_shim import run_copilot_agent, run_copilot_agent_stream
+from copilot_shim import configure_connector_tools, run_copilot_agent, run_copilot_agent_stream
+from copilot_shim.connector_tool_cache import _resolve_env_var
 
 from azurefunctions.extensions.http.fastapi import Request, Response, StreamingResponse
 
@@ -130,100 +131,253 @@ def _safe_timer_name(raw_name: str) -> str:
     return name
 
 
-def _register_dynamic_timer_functions() -> None:
+def _safe_function_name(raw_name: str) -> str:
+    name = re.sub(r"[^a-zA-Z0-9_]", "_", raw_name).strip("_")
+    if not name:
+        return "agent_function"
+    if name[0].isdigit():
+        return f"fn_{name}"
+    return name
+
+
+def _register_dynamic_functions() -> None:
     function_specs = _load_agents_functions_from_frontmatter()
     if not function_specs:
         return
 
     registered_names = set()
+    connector_trigger_specs = []
 
     for index, spec in enumerate(function_specs, start=1):
         trigger_value = spec.get("trigger", "timer")
         trigger = str(trigger_value).strip().lower()
-        if trigger != "timer":
+
+        if trigger == "timer":
+            _register_timer_function(spec, index, registered_names)
+        elif trigger == "teams_new_channel_message":
+            connector_trigger_specs.append((index, spec))
+        else:
             logging.warning(
-                f"Rejected AGENTS function #{index}: unsupported trigger '{trigger}' (raw={trigger_value!r}). Only 'timer' is supported."
+                f"Rejected AGENTS function #{index}: unsupported trigger '{trigger}' (raw={trigger_value!r})."
             )
             continue
 
-        schedule_raw = spec.get("schedule")
-        prompt_raw = spec.get("prompt")
+    # Register connector triggers (Teams, etc.) if any are present
+    if connector_trigger_specs:
+        _register_connector_triggers(connector_trigger_specs, registered_names)
 
-        if not isinstance(schedule_raw, str) or not schedule_raw.strip():
-            logging.warning(f"Skipping AGENTS function #{index}: missing required 'schedule'")
-            continue
 
-        if not isinstance(prompt_raw, str) or not prompt_raw.strip():
-            logging.warning(f"Skipping AGENTS function #{index}: missing required 'prompt'")
-            continue
+def _register_timer_function(spec: Dict[str, Any], index: int, registered_names: set) -> None:
+    """Register a single timer-triggered function from the spec."""
+    schedule_raw = spec.get("schedule")
+    prompt_raw = spec.get("prompt")
 
-        schedule = _normalize_timer_schedule(schedule_raw)
-        if not _is_valid_timer_schedule(schedule):
-            logging.warning(
-                f"Skipping AGENTS function #{index}: invalid schedule '{schedule_raw}' after normalization '{schedule}'"
-            )
-            continue
+    if not isinstance(schedule_raw, str) or not schedule_raw.strip():
+        logging.warning(f"Skipping AGENTS function #{index}: missing required 'schedule'")
+        return
 
-        base_name = _safe_timer_name(str(spec.get("name") or f"timer_agent_{index}"))
-        function_name = base_name
-        suffix = 2
-        while function_name in registered_names:
-            function_name = f"{base_name}_{suffix}"
-            suffix += 1
-        registered_names.add(function_name)
+    if not isinstance(prompt_raw, str) or not prompt_raw.strip():
+        logging.warning(f"Skipping AGENTS function #{index}: missing required 'prompt'")
+        return
 
-        prompt = prompt_raw.strip()
-        should_log_response = _to_bool(spec.get("logger", True), default=True)
+    schedule = _normalize_timer_schedule(schedule_raw)
+    if not _is_valid_timer_schedule(schedule):
+        logging.warning(
+            f"Skipping AGENTS function #{index}: invalid schedule '{schedule_raw}' after normalization '{schedule}'"
+        )
+        return
 
-        def _make_timer_handler(
-            timer_function_name: str,
-            timer_schedule: str,
-            timer_prompt: str,
-            log_response: bool,
-        ):
-            async def _timer_handler(timer_request: func.TimerRequest) -> None:
-                if timer_request.past_due:
-                    logging.info(f"Timer '{timer_function_name}' is past due.")
+    base_name = _safe_timer_name(str(spec.get("name") or f"timer_agent_{index}"))
+    function_name = base_name
+    suffix = 2
+    while function_name in registered_names:
+        function_name = f"{base_name}_{suffix}"
+        suffix += 1
+    registered_names.add(function_name)
 
-                logging.info(f"Timer '{timer_function_name}' running with schedule '{timer_schedule}'")
+    prompt = prompt_raw.strip()
+    should_log_response = _to_bool(spec.get("logger", True), default=True)
 
-                try:
-                    result = await run_copilot_agent(timer_prompt)
-                    if log_response:
-                        logging.info(
-                            "Timer '%s' agent response: %s",
-                            timer_function_name,
-                            json.dumps(
-                                {
-                                    "session_id": result.session_id,
-                                    "response": result.content,
-                                    "response_intermediate": result.content_intermediate,
-                                    "tool_calls": result.tool_calls,
-                                },
-                                ensure_ascii=False,
-                                default=str,
-                            ),
-                        )
-                except Exception as exc:
-                    logging.exception(f"Timer '{timer_function_name}' failed: {exc}")
+    def _make_timer_handler(
+        timer_function_name: str,
+        timer_schedule: str,
+        timer_prompt: str,
+        log_response: bool,
+    ):
+        async def _timer_handler(timer_request: func.TimerRequest) -> None:
+            if timer_request.past_due:
+                logging.info(f"Timer '{timer_function_name}' is past due.")
 
-            _timer_handler.__name__ = f"timer_handler_{timer_function_name}"
-            return _timer_handler
+            logging.info(f"Timer '{timer_function_name}' running with schedule '{timer_schedule}'")
 
-        handler = _make_timer_handler(function_name, schedule, prompt, should_log_response)
-        decorated = app.timer_trigger(
-            schedule=schedule,
-            arg_name="timer_request",
-            run_on_startup=False,
-        )(handler)
-        app.function_name(name=function_name)(decorated)
+            try:
+                result = await run_copilot_agent(timer_prompt)
+                if log_response:
+                    logging.info(
+                        "Timer '%s' agent response: %s",
+                        timer_function_name,
+                        json.dumps(
+                            {
+                                "session_id": result.session_id,
+                                "response": result.content,
+                                "response_intermediate": result.content_intermediate,
+                                "tool_calls": result.tool_calls,
+                            },
+                            ensure_ascii=False,
+                            default=str,
+                        ),
+                    )
+            except Exception as exc:
+                logging.exception(f"Timer '{timer_function_name}' failed: {exc}")
+
+        _timer_handler.__name__ = f"timer_handler_{timer_function_name}"
+        return _timer_handler
+
+    handler = _make_timer_handler(function_name, schedule, prompt, should_log_response)
+    decorated = app.timer_trigger(
+        schedule=schedule,
+        arg_name="timer_request",
+        run_on_startup=False,
+    )(handler)
+    app.function_name(name=function_name)(decorated)
+
+    logging.info(
+        f"Registered dynamic timer function '{function_name}' from AGENTS.md (schedule='{schedule}', logger={should_log_response})"
+    )
+
+
+def _register_connector_triggers(trigger_specs: List[tuple], registered_names: set) -> None:
+    """Register connector-based triggers (e.g., Teams new channel message)."""
+    try:
+        import azure.functions_connectors as fc
+    except ImportError:
+        logging.error(
+            "azure-functions-connectors package not installed. "
+            "Cannot register connector triggers. "
+            "Install from: https://github.com/anthonychu/azure-functions-connectors-python"
+        )
+        return
+
+    connectors = fc.FunctionsConnectors(app)
+
+    for index, spec in trigger_specs:
+        trigger = str(spec.get("trigger", "")).strip().lower()
+
+        if trigger == "teams_new_channel_message":
+            _register_teams_trigger(connectors, spec, index, registered_names)
+        else:
+            logging.warning(f"Skipping AGENTS function #{index}: unsupported connector trigger '{trigger}'")
+
+
+def _register_teams_trigger(
+    connectors,
+    spec: Dict[str, Any],
+    index: int,
+    registered_names: set,
+) -> None:
+    """Register a Teams new channel message trigger."""
+    connection_id_raw = spec.get("connection_id")
+    team_id_raw = spec.get("team_id")
+    channel_id_raw = spec.get("channel_id")
+
+    if not connection_id_raw:
+        logging.warning(f"Skipping AGENTS function #{index}: missing required 'connection_id' for teams_new_channel_message")
+        return
+    if not team_id_raw:
+        logging.warning(f"Skipping AGENTS function #{index}: missing required 'team_id' for teams_new_channel_message")
+        return
+    if not channel_id_raw:
+        logging.warning(f"Skipping AGENTS function #{index}: missing required 'channel_id' for teams_new_channel_message")
+        return
+
+    connection_id = _resolve_env_var(str(connection_id_raw))
+    team_id = _resolve_env_var(str(team_id_raw))
+    channel_id = _resolve_env_var(str(channel_id_raw))
+
+    # Optional polling interval overrides
+    min_interval = spec.get("min_interval")
+    max_interval = spec.get("max_interval")
+
+    base_name = _safe_function_name(str(spec.get("name") or f"teams_agent_{index}"))
+    function_name = base_name
+    suffix = 2
+    while function_name in registered_names:
+        function_name = f"{base_name}_{suffix}"
+        suffix += 1
+    registered_names.add(function_name)
+
+    should_log_response = _to_bool(spec.get("logger", True), default=True)
+
+    def _make_teams_handler(handler_function_name: str, log_response: bool):
+        async def _teams_handler(message):
+            logging.info(f"Teams trigger '{handler_function_name}' received new channel message")
+
+            try:
+                # Serialize the full trigger payload as prompt
+                if hasattr(message, "to_dict"):
+                    payload = message.to_dict()
+                elif hasattr(message, "model_dump"):
+                    payload = message.model_dump()
+                elif isinstance(message, dict):
+                    payload = message
+                else:
+                    payload = {"raw": str(message)}
+
+                prompt = json.dumps(payload, ensure_ascii=False, default=str)
+                result = await run_copilot_agent(prompt)
+
+                if log_response:
+                    logging.info(
+                        "Teams trigger '%s' agent response: %s",
+                        handler_function_name,
+                        json.dumps(
+                            {
+                                "session_id": result.session_id,
+                                "response": result.content,
+                                "response_intermediate": result.content_intermediate,
+                                "tool_calls": result.tool_calls,
+                            },
+                            ensure_ascii=False,
+                            default=str,
+                        ),
+                    )
+            except Exception as exc:
+                logging.exception(f"Teams trigger '{handler_function_name}' failed: {exc}")
+
+        _teams_handler.__name__ = f"teams_handler_{handler_function_name}"
+        return _teams_handler
+
+    handler = _make_teams_handler(function_name, should_log_response)
+
+    try:
+        trigger_kwargs = {
+            "connection_id": connection_id,
+            "team_id": team_id,
+            "channel_id": channel_id,
+        }
+        if min_interval is not None:
+            trigger_kwargs["min_interval"] = int(min_interval)
+        if max_interval is not None:
+            trigger_kwargs["max_interval"] = int(max_interval)
+
+        connectors.teams.new_channel_message_trigger(**trigger_kwargs)(handler)
 
         logging.info(
-            f"Registered dynamic timer function '{function_name}' from AGENTS.md (schedule='{schedule}', logger={should_log_response})"
+            f"Registered Teams channel message trigger '{function_name}' from AGENTS.md "
+            f"(team_id='{team_id}', channel_id='{channel_id}'"
+            f"{f', min_interval={min_interval}' if min_interval is not None else ''}"
+            f"{f', max_interval={max_interval}' if max_interval is not None else ''})"
         )
+    except Exception as exc:
+        logging.error(f"Failed to register Teams trigger '{function_name}': {exc}")
 
 
-_register_dynamic_timer_functions()
+_register_dynamic_functions()
+
+# Configure connector tools from frontmatter tools_from_connections
+_tools_from_connections = _AGENTS_FRONTMATTER_METADATA.get("tools_from_connections")
+if isinstance(_tools_from_connections, list):
+    configure_connector_tools(_tools_from_connections)
 
 
 @app.route(
