@@ -1,7 +1,30 @@
 import logging
 import os
 import re
+from pathlib import Path
 from typing import Optional
+
+
+# ---------------------------------------------------------------------------
+# Application root resolution
+# ---------------------------------------------------------------------------
+
+def get_app_root() -> Path:
+    """Return the root directory of the user's agent project.
+
+    This is the directory containing ``AGENTS.md``, ``tools/``,
+    ``.vscode/mcp.json``, skills directories, etc.  By default it is
+    the parent of the ``copilot_functions`` package directory (i.e. the
+    Azure Functions ``src/`` folder).
+
+    Override with the ``COPILOT_APP_ROOT`` environment variable when
+    ``copilot_functions`` is installed as a standalone package and the
+    project root is elsewhere.
+    """
+    explicit = os.environ.get("COPILOT_APP_ROOT")
+    if explicit:
+        return Path(explicit).resolve()
+    return Path(__file__).resolve().parent.parent
 
 # Default session state directory used by the Copilot CLI
 _DEFAULT_CONFIG_DIR = os.path.expanduser("~/.copilot")

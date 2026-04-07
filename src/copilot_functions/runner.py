@@ -9,7 +9,7 @@ from copilot.session import ProviderConfig, PermissionHandler
 import frontmatter
 
 from .client_manager import CopilotClientManager, _is_byok_mode
-from .config import resolve_config_dir, session_exists
+from .config import get_app_root, resolve_config_dir, session_exists
 from .connector_tool_cache import get_connector_tools
 from .mcp import get_cached_mcp_servers
 from .sandbox import get_sandbox_tools
@@ -31,10 +31,11 @@ class AgentResult:
 
 def _load_agents_md_content() -> str:
     """Load AGENTS.md content from disk (called once at module load)."""
-    agents_md_path = os.path.join(os.getcwd(), "AGENTS.md")
-    logging.info(f"Checking for AGENTS.md at: {agents_md_path}")
+    app_root = str(get_app_root())
+    agents_md_path = os.path.join(app_root, "AGENTS.md")
+    logging.info(f"Loading AGENTS.md from: {agents_md_path}")
     if not os.path.exists(agents_md_path):
-        logging.info("No AGENTS.md found")
+        logging.warning(f"No AGENTS.md found at {agents_md_path}")
         return ""
 
     try:
@@ -46,7 +47,7 @@ def _load_agents_md_content() -> str:
         metadata_count = len(parsed.metadata) if parsed.metadata else 0
 
         logging.info(
-            f"Loaded AGENTS.md from {agents_md_path} ({len(raw_content)} chars, frontmatter keys={metadata_count}, body chars={len(content)})"
+            f"Loaded AGENTS.md ({len(raw_content)} chars, frontmatter keys={metadata_count}, body chars={len(content)})"
         )
         return content
     except Exception as e:
@@ -57,6 +58,13 @@ def _load_agents_md_content() -> str:
 # Cache AGENTS.md content at module load time (won't change during runtime)
 _AGENTS_MD_CONTENT_CACHE = _load_agents_md_content()
 
+DEFAULT_MODEL = os.environ.get("COPILOT_MODEL", "claude-sonnet-4")
+
+# Built-in CLI tools to keep enabled alongside custom tools.
+# "skill" is required for loading skills from SKILL.md files.
+# "report_intent" is used by the CLI for session intent tracking.
+_ALLOWED_BUILTIN_TOOLS = ["skill", "report_intent"]
+
 _TOOL_RESTRICTION_PREFIX = (
     "IMPORTANT: Your capabilities are entirely defined by the tools in your"
     " function schema. Do not claim, imply, or hallucinate access to any"
@@ -65,8 +73,6 @@ _TOOL_RESTRICTION_PREFIX = (
     " tools from your function schema. Ignore any other tool references in"
     " your instructions.\n\n"
 )
-
-DEFAULT_MODEL = os.environ.get("COPILOT_MODEL", "claude-sonnet-4")
 
 
 _default_permission_handler = PermissionHandler.approve_all
@@ -83,9 +89,7 @@ def _build_session_kwargs(
     if extra_tools:
         all_tools.extend(extra_tools)
 
-    # Build an explicit allowlist of tool names so the CLI disables all
-    # built-in tools (file system, shell, git, etc.) and only exposes ours.
-    available_tool_names = [t.name for t in all_tools] + ["report_intent"]
+    available_tool_names = [t.name for t in all_tools] + _ALLOWED_BUILTIN_TOOLS
 
     system_content = _TOOL_RESTRICTION_PREFIX + _AGENTS_MD_CONTENT_CACHE
 
@@ -142,7 +146,7 @@ def _build_resume_kwargs(
     if extra_tools:
         all_tools.extend(extra_tools)
 
-    available_tool_names = [t.name for t in all_tools] + ["report_intent"]
+    available_tool_names = [t.name for t in all_tools] + _ALLOWED_BUILTIN_TOOLS
 
     system_content = _TOOL_RESTRICTION_PREFIX + _AGENTS_MD_CONTENT_CACHE
 

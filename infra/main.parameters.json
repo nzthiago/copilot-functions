@@ -29,6 +29,9 @@
     "teamsChannelId": {
       "value": "${TEAMS_CHANNEL_ID}"
     },
+    "sqlConnectionId": {
+      "value": "${SQL_CONNECTION_ID}"
+    },
     "acaSessionPoolEndpoint": {
       "value": "${ACA_SESSION_POOL_ENDPOINT}"
     }

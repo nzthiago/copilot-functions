@@ -40,8 +40,7 @@ src/                           # Self-contained Azure Functions app
 ├── host.json                  # Azure Functions host configuration
 ├── requirements.txt           # Python dependencies
 ├── .funcignore                # Files to exclude from deployment
-├── public/
-│   └── index.html             # Built-in chat UI
+├── skills/                    # Skills (reusable prompt modules with SKILL.md)
 ├── tools/                     # Custom tools written in plain Python
 │   ├── start_article_creation.py
 │   └── get_article_creation_status.py
@@ -55,9 +54,11 @@ src/                           # Self-contained Azure Functions app
     ├── client_manager.py      # CopilotClient singleton
     ├── sandbox.py             # ACA dynamic sessions (execute_python tool)
     ├── arm.py                 # ARM API client
-    ├── config.py              # Session state config
+    ├── config.py              # App root resolution, env var substitution, session config
     ├── mcp.py                 # MCP server config loading
-    └── skills.py              # Skill directory discovery
+    ├── skills.py              # Skill directory discovery
+    └── public/
+        └── index.html         # Built-in chat UI
 ```
 
 The `src` folder is a complete Azure Functions Python app. `function_app.py` is a thin wrapper that calls `create_function_app()` from the `copilot_functions` library. Your agent definition lives in `AGENTS.md` and `tools/` — the library handles all the Copilot SDK integration, HTTP routes, MCP endpoints, and dynamic trigger registration.

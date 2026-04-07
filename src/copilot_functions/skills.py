@@ -1,12 +1,15 @@
+import logging
 import os
 from typing import Optional
+
+from .config import get_app_root
 
 
 def resolve_session_directory_for_skills() -> Optional[str]:
     """
     Resolve a session directory that contains common skills locations.
     """
-    cwd = os.getcwd()
+    app_root = str(get_app_root())
     env_session_dir = os.environ.get("COPILOT_SESSION_DIRECTORY")
     if env_session_dir:
         resolved = os.path.expanduser(env_session_dir)
@@ -14,11 +17,11 @@ def resolve_session_directory_for_skills() -> Optional[str]:
             return resolved
 
     candidate_roots = [
-        cwd,
-        os.path.join(cwd, ".codex"),
-        os.path.join(cwd, ".claudeCode"),
-        os.path.join(cwd, ".github"),
-        os.path.join(cwd, ".vscode"),
+        app_root,
+        os.path.join(app_root, ".codex"),
+        os.path.join(app_root, ".claudeCode"),
+        os.path.join(app_root, ".github"),
+        os.path.join(app_root, ".vscode"),
     ]
     skill_dir_names = ("skills", "Skills")
 
@@ -26,7 +29,8 @@ def resolve_session_directory_for_skills() -> Optional[str]:
         if not os.path.isdir(root):
             continue
         for name in skill_dir_names:
-            if os.path.isdir(os.path.join(root, name)):
-                return root
+            skill_path = os.path.join(root, name)
+            if os.path.isdir(skill_path):
+                return skill_path
 
     return None

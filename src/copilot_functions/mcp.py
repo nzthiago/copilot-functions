@@ -5,6 +5,8 @@ from typing import Any, Dict, Optional
 
 from copilot.session import MCPLocalServerConfig, MCPRemoteServerConfig, MCPServerConfig
 
+from .config import get_app_root
+
 _MCP_SERVERS_CACHE: Optional[Dict[str, MCPServerConfig]] = None
 
 
@@ -39,9 +41,10 @@ def _parse_mcp_server_config(server: Dict[str, Any]) -> Optional[MCPServerConfig
 
 
 def _load_mcp_servers_from_file() -> Dict[str, MCPServerConfig]:
+    app_root = str(get_app_root())
     candidates = [
-        os.path.join(os.getcwd(), ".vscode", "mcp.json"),
-        os.path.join(os.getcwd(), "mcp.json"),
+        os.path.join(app_root, ".vscode", "mcp.json"),
+        os.path.join(app_root, "mcp.json"),
     ]
 
     for path in candidates:

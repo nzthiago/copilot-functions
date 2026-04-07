@@ -7,13 +7,15 @@ from typing import Callable, List
 
 from copilot import define_tool
 
+from .config import get_app_root
+
 
 def discover_tools() -> List[Callable]:
     """
     Dynamically discover and load tools from the `tools` folder.
     """
     tools: List[Callable] = []
-    project_src_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    project_src_dir = str(get_app_root())
     tools_dir = os.path.join(project_src_dir, "tools")
 
     # Add tools dir to sys.path so tool modules can import shared helpers

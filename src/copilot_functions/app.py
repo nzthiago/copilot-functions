@@ -14,14 +14,14 @@ from typing import Any, Dict, List
 import azure.functions as func
 import frontmatter
 
-from .config import resolve_env_var
+from .config import get_app_root, resolve_env_var
 from .connector_tool_cache import configure_connector_tools
 from .runner import run_copilot_agent, run_copilot_agent_stream
 from .sandbox import configure_sandbox
 from azurefunctions.extensions.http.fastapi import Request, Response, StreamingResponse
 
 # Resolve the application root (parent of this package directory, i.e. ``src/``)
-_APP_ROOT = Path(__file__).resolve().parent.parent
+_APP_ROOT = get_app_root()
 
 _MCP_AGENT_TOOL_PROPERTIES = json.dumps(
     [

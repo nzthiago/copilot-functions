@@ -75,6 +75,9 @@ param teamsTeamId string = ''
 @description('Microsoft Teams channel ID for the channel message trigger.')
 param teamsChannelId string = ''
 
+@description('ARM resource ID of the SQL API Connection for connector tools.')
+param sqlConnectionId string = ''
+
 @description('Pool management endpoint URL for ACA dynamic sessions (execution sandbox).')
 param acaSessionPoolEndpoint string = ''
 
@@ -199,6 +202,9 @@ module api './app/api.bicep' = {
       } : {},
       !empty(teamsChannelId) ? {
         TEAMS_CHANNEL_ID: teamsChannelId
+      } : {},
+      !empty(sqlConnectionId) ? {
+        SQL_CONNECTION_ID: sqlConnectionId
       } : {},
       !empty(acaSessionPoolEndpoint) ? {
         ACA_SESSION_POOL_ENDPOINT: acaSessionPoolEndpoint
