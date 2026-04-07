@@ -3,7 +3,7 @@ import logging
 import os
 from typing import Any, Dict, Optional
 
-from copilot import MCPLocalServerConfig, MCPRemoteServerConfig, MCPServerConfig
+from copilot.session import MCPLocalServerConfig, MCPRemoteServerConfig, MCPServerConfig
 
 _MCP_SERVERS_CACHE: Optional[Dict[str, MCPServerConfig]] = None
 

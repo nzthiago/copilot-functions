@@ -29,22 +29,37 @@ Development workflow:
 2. Deploy the same project to Azure Functions with `azd up`
 3. Your agent is now a cloud-hosted HTTP API — no rewrites needed
 
-This repo includes a sample **Microsoft expert agent** that helps developers and architects look up Azure pricing, estimate costs, and answer questions using official Microsoft Learn documentation.
+This repo includes a sample **Teams chat agent** that responds to messages in a Microsoft Teams channel and can create articles on demand.
 
 ## Project Structure
 
 ```
-src/                       # Your agent — a pure Copilot project, no cloud knowledge
-├── AGENTS.md             # Agent instructions and behavior (+ optional frontmatter)
-├── .github/skills/
-│   └── azure-pricing/    # Skill: fetch real-time Azure retail pricing
-│       └── SKILL.md
-├── .vscode/mcp.json      # MCP servers (Microsoft Learn)
-└── tools/
-    └── cost_estimator.py # Tool: estimate monthly/annual costs from a unit price
+src/                           # Self-contained Azure Functions app
+├── function_app.py            # Thin entry point (imports copilot_functions)
+├── AGENTS.md                  # Agent instructions and behavior (+ optional frontmatter)
+├── host.json                  # Azure Functions host configuration
+├── requirements.txt           # Python dependencies
+├── .funcignore                # Files to exclude from deployment
+├── public/
+│   └── index.html             # Built-in chat UI
+├── tools/                     # Custom tools written in plain Python
+│   ├── start_article_creation.py
+│   └── get_article_creation_status.py
+└── copilot_functions/         # Library: Azure Functions + Copilot SDK integration
+    ├── app.py                 # create_function_app() factory
+    ├── runner.py              # Agent execution and session management
+    ├── tools.py               # Dynamic tool discovery from tools/
+    ├── connector_tools.py     # Azure connector → Copilot tool generation
+    ├── connectors.py          # ARM connector Swagger parsing
+    ├── connector_tool_cache.py
+    ├── client_manager.py      # CopilotClient singleton
+    ├── arm.py                 # ARM API client
+    ├── config.py              # Session state config
+    ├── mcp.py                 # MCP server config loading
+    └── skills.py              # Skill directory discovery
 ```
 
-The `src` folder contains **only** your agent definition — no Copilot SDK, no Azure Functions code, no cloud infrastructure concerns. It's just a standard markdown-based agent project. The agent format is the programming model.
+The `src` folder is a complete Azure Functions Python app. `function_app.py` is a thin wrapper that calls `create_function_app()` from the `copilot_functions` library. Your agent definition lives in `AGENTS.md` and `tools/` — the library handles all the Copilot SDK integration, HTTP routes, MCP endpoints, and dynamic trigger registration.
 
 `AGENTS.md` supports optional YAML frontmatter. The frontmatter can be used to take your agent beyond HTTP or a chat interface by integrating with Azure Functions' event-driven programming model. For example, you can define timer-triggered functions that run on a [schedule](#timer-triggers-from-agentsmd-frontmatter) without needing to write any Azure Functions code.
 
@@ -86,6 +101,14 @@ During deployment, you'll be prompted for:
 | **GitHub Token** | Your GitHub PAT with Copilot Requests permission (required — used for session persistence and GitHub model access) |
 | **Model Selection** | Which model to use (see below) |
 | **VNet Enabled** | Whether to deploy with VNet integration |
+
+You can also configure optional environment variables for Teams connector integration:
+
+```bash
+azd env set TEAMS_CONNECTION_ID "/subscriptions/.../providers/Microsoft.Web/connections/teams"
+azd env set TEAMS_TEAM_ID "<team-guid>"
+azd env set TEAMS_CHANNEL_ID "<channel-id>"
+```
 
 #### Model Selection
 

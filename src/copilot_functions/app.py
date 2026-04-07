@@ -1,22 +1,25 @@
 """
-Azure Functions + GitHub Copilot SDK
+Azure Functions + GitHub Copilot SDK — app factory.
+
+Call ``create_function_app()`` to build a fully-configured FunctionApp
+with HTTP routes, MCP tool, and dynamic triggers from AGENTS.md.
 """
 
 import json
 import logging
-import os
 import re
 from pathlib import Path
 from typing import Any, Dict, List
 
 import azure.functions as func
 import frontmatter
-from copilot_shim import configure_connector_tools, run_copilot_agent, run_copilot_agent_stream
-from copilot_shim.connector_tool_cache import _resolve_env_var
 
+from .connector_tool_cache import _resolve_env_var, configure_connector_tools
+from .runner import run_copilot_agent, run_copilot_agent_stream
 from azurefunctions.extensions.http.fastapi import Request, Response, StreamingResponse
 
-app = func.FunctionApp(http_auth_level=func.AuthLevel.FUNCTION)
+# Resolve the application root (parent of this package directory, i.e. ``src/``)
+_APP_ROOT = Path(__file__).resolve().parent.parent
 
 _MCP_AGENT_TOOL_PROPERTIES = json.dumps(
     [
@@ -31,12 +34,13 @@ _MCP_AGENT_TOOL_PROPERTIES = json.dumps(
 )
 
 
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
 def _load_agents_frontmatter_metadata() -> Dict[str, Any]:
     """Load AGENTS.md frontmatter metadata as a dictionary."""
-    # Use __file__ to locate AGENTS.md relative to function_app.py instead of
-    # os.getcwd(), because Flex Consumption cold start uses a standby path
-    # (/tmp/functions/standby/wwwroot/) as cwd during module import.
-    agents_md_path = Path(__file__).resolve().parent / "AGENTS.md"
+    agents_md_path = _APP_ROOT / "AGENTS.md"
     if not agents_md_path.exists():
         return {}
 
@@ -59,18 +63,6 @@ def _safe_mcp_tool_name(raw_name: str) -> str:
     return normalized
 
 
-_AGENTS_FRONTMATTER_METADATA = _load_agents_frontmatter_metadata()
-
-_MCP_AGENT_TOOL_NAME = _safe_mcp_tool_name(
-    str(_AGENTS_FRONTMATTER_METADATA.get("name") or "agent_chat")
-)
-
-_MCP_AGENT_TOOL_DESCRIPTION = str(
-    _AGENTS_FRONTMATTER_METADATA.get("description")
-    or "Run an agent chat turn with a prompt."
-).strip() or "Run an agent chat turn with a prompt."
-
-
 def _extract_mcp_session_id(payload: Dict[str, Any]) -> str | None:
     """Extract MCP session id from top-level context payload only."""
     value = payload.get("sessionId") or payload.get("sessionid")
@@ -79,9 +71,8 @@ def _extract_mcp_session_id(payload: Dict[str, Any]) -> str | None:
     return None
 
 
-def _load_agents_functions_from_frontmatter() -> List[Dict[str, Any]]:
+def _load_agents_functions_from_frontmatter(metadata: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Load optional function definitions from AGENTS.md frontmatter."""
-    metadata = _AGENTS_FRONTMATTER_METADATA
     if not metadata:
         logging.info("AGENTS.md not found or has no parseable frontmatter. No dynamic functions registered.")
         return []
@@ -140,20 +131,27 @@ def _safe_function_name(raw_name: str) -> str:
     return name
 
 
-def _register_dynamic_functions() -> None:
-    function_specs = _load_agents_functions_from_frontmatter()
+# ---------------------------------------------------------------------------
+# Dynamic function registration
+# ---------------------------------------------------------------------------
+
+def _register_dynamic_functions(
+    app: func.FunctionApp,
+    metadata: Dict[str, Any],
+) -> None:
+    function_specs = _load_agents_functions_from_frontmatter(metadata)
     if not function_specs:
         return
 
-    registered_names = set()
-    connector_trigger_specs = []
+    registered_names: set = set()
+    connector_trigger_specs: List[tuple] = []
 
     for index, spec in enumerate(function_specs, start=1):
         trigger_value = spec.get("trigger", "timer")
         trigger = str(trigger_value).strip().lower()
 
         if trigger == "timer":
-            _register_timer_function(spec, index, registered_names)
+            _register_timer_function(app, spec, index, registered_names)
         elif trigger == "teams_new_channel_message":
             connector_trigger_specs.append((index, spec))
         else:
@@ -164,10 +162,15 @@ def _register_dynamic_functions() -> None:
 
     # Register connector triggers (Teams, etc.) if any are present
     if connector_trigger_specs:
-        _register_connector_triggers(connector_trigger_specs, registered_names)
+        _register_connector_triggers(app, connector_trigger_specs, registered_names)
 
 
-def _register_timer_function(spec: Dict[str, Any], index: int, registered_names: set) -> None:
+def _register_timer_function(
+    app: func.FunctionApp,
+    spec: Dict[str, Any],
+    index: int,
+    registered_names: set,
+) -> None:
     """Register a single timer-triggered function from the spec."""
     schedule_raw = spec.get("schedule")
     prompt_raw = spec.get("prompt")
@@ -246,7 +249,11 @@ def _register_timer_function(spec: Dict[str, Any], index: int, registered_names:
     )
 
 
-def _register_connector_triggers(trigger_specs: List[tuple], registered_names: set) -> None:
+def _register_connector_triggers(
+    app: func.FunctionApp,
+    trigger_specs: List[tuple],
+    registered_names: set,
+) -> None:
     """Register connector-based triggers (e.g., Teams new channel message)."""
     try:
         import azure.functions_connectors as fc
@@ -372,156 +379,179 @@ def _register_teams_trigger(
         logging.error(f"Failed to register Teams trigger '{function_name}': {exc}")
 
 
-_register_dynamic_functions()
+# ---------------------------------------------------------------------------
+# App factory
+# ---------------------------------------------------------------------------
 
-# Configure connector tools from frontmatter tools_from_connections
-_tools_from_connections = _AGENTS_FRONTMATTER_METADATA.get("tools_from_connections")
-if isinstance(_tools_from_connections, list):
-    configure_connector_tools(_tools_from_connections)
+def create_function_app() -> func.FunctionApp:
+    """Build and return a fully-configured Azure Functions app."""
 
+    app = func.FunctionApp(http_auth_level=func.AuthLevel.FUNCTION)
 
-@app.route(
-    route="{*ignored}",
-    methods=["GET"],
-    auth_level=func.AuthLevel.ANONYMOUS,
-)
-def root_chat_page(req: Request) -> Response:
-    """Serve the chat UI at the root route."""
-    ignored = (req.path_params or {}).get("ignored", "")
-    if ignored:
-        return Response("Not found", status_code=404)
+    # ---- Load AGENTS.md frontmatter ----
+    metadata = _load_agents_frontmatter_metadata()
 
-    index_path = Path(__file__).resolve().parent / "public" / "index.html"
-    if not index_path.exists():
-        return Response("index.html not found", status_code=404)
-
-    return Response(
-        index_path.read_text(encoding="utf-8"),
-        status_code=200,
-        media_type="text/html",
+    mcp_tool_name = _safe_mcp_tool_name(
+        str(metadata.get("name") or "agent_chat")
     )
+    mcp_tool_description = str(
+        metadata.get("description") or "Run an agent chat turn with a prompt."
+    ).strip() or "Run an agent chat turn with a prompt."
 
-@app.route(route="agent/chat", methods=["POST"])
-async def chat(req: Request) -> Response:
-    """
-    Chat endpoint - send a prompt, get a response.
+    # ---- Register dynamic functions (timer, Teams) ----
+    _register_dynamic_functions(app, metadata)
 
-    POST /agent/chat
-    Headers:
-        x-ms-session-id (optional): Session ID for resuming a previous session
-    Body:
-    {
-        "prompt": "What is 2+2?"
-    }
-    """
-    try:
-        body = await req.json()
-        prompt = body.get("prompt")
+    # ---- Configure connector tools from frontmatter ----
+    tools_from_connections = metadata.get("tools_from_connections")
+    if isinstance(tools_from_connections, list):
+        configure_connector_tools(tools_from_connections)
 
-        if not prompt:
-            return Response(
-                json.dumps({"error": "Missing 'prompt'"}),
-                status_code=400,
+    # ---- HTTP routes ----
+
+    @app.route(
+        route="{*ignored}",
+        methods=["GET"],
+        auth_level=func.AuthLevel.ANONYMOUS,
+    )
+    def root_chat_page(req: Request) -> Response:
+        """Serve the chat UI at the root route."""
+        ignored = (req.path_params or {}).get("ignored", "")
+        if ignored:
+            return Response("Not found", status_code=404)
+
+        index_path = _APP_ROOT / "public" / "index.html"
+        if not index_path.exists():
+            return Response("index.html not found", status_code=404)
+
+        return Response(
+            index_path.read_text(encoding="utf-8"),
+            status_code=200,
+            media_type="text/html",
+        )
+
+    @app.route(route="agent/chat", methods=["POST"])
+    async def chat(req: Request) -> Response:
+        """
+        Chat endpoint - send a prompt, get a response.
+
+        POST /agent/chat
+        Headers:
+            x-ms-session-id (optional): Session ID for resuming a previous session
+        Body:
+        {
+            "prompt": "What is 2+2?"
+        }
+        """
+        try:
+            body = await req.json()
+            prompt = body.get("prompt")
+
+            if not prompt:
+                return Response(
+                    json.dumps({"error": "Missing 'prompt'"}),
+                    status_code=400,
+                    media_type="application/json",
+                )
+
+            session_id = req.headers.get("x-ms-session-id")
+            result = await run_copilot_agent(prompt, session_id=session_id)
+
+            response = Response(
+                json.dumps(
+                    {
+                        "session_id": result.session_id,
+                        "response": result.content,
+                        "response_intermediate": result.content_intermediate,
+                        "tool_calls": result.tool_calls,
+                    }
+                ),
                 media_type="application/json",
+                headers={"x-ms-session-id": result.session_id},
+            )
+            return response
+
+        except Exception as e:
+            error_msg = str(e) if str(e) else f"{type(e).__name__}: {repr(e)}"
+            logging.error(f"Chat error: {error_msg}")
+            return Response(
+                json.dumps({"error": error_msg}), status_code=500, media_type="application/json"
             )
 
-        session_id = req.headers.get("x-ms-session-id")
-        result = await run_copilot_agent(prompt, session_id=session_id)
+    @app.route(route="agent/chatstream", methods=["POST"])
+    async def chat_stream(req: Request) -> StreamingResponse:
+        """
+        Streaming chat endpoint - send a prompt, receive SSE events.
 
-        response = Response(
-            json.dumps(
+        POST /agent/chat/stream
+        Headers:
+            x-ms-session-id (optional): Session ID for resuming a previous session
+        Body:
+        {
+            "prompt": "What is 2+2?"
+        }
+
+        Response: text/event-stream with events:
+            data: {"type": "session", "session_id": "..."}
+            data: {"type": "delta", "content": "partial text"}
+            data: {"type": "tool_start", "tool_name": "...", "tool_call_id": "..."}
+            data: {"type": "message", "content": "full message"}
+            data: {"type": "done"}
+        """
+        try:
+            body = await req.json()
+            prompt = body.get("prompt")
+
+            if not prompt:
+                async def error_gen():
+                    yield f"data: {json.dumps({'type': 'error', 'content': 'Missing prompt'})}\n\n"
+                return StreamingResponse(error_gen(), media_type="text/event-stream")
+
+            session_id = req.headers.get("x-ms-session-id")
+            return StreamingResponse(
+                run_copilot_agent_stream(prompt, session_id=session_id),
+                media_type="text/event-stream",
+            )
+
+        except Exception as e:
+            error_msg = str(e) if str(e) else f"{type(e).__name__}: {repr(e)}"
+            logging.error(f"Chat stream error: {error_msg}")
+            async def error_gen():
+                yield f"data: {json.dumps({'type': 'error', 'content': error_msg})}\n\n"
+            return StreamingResponse(error_gen(), media_type="text/event-stream")
+
+    # ---- MCP tool ----
+
+    @app.mcp_tool_trigger(
+        arg_name="context",
+        tool_name=mcp_tool_name,
+        description=mcp_tool_description,
+        tool_properties=_MCP_AGENT_TOOL_PROPERTIES,
+    )
+    async def mcp_agent_chat(context: str) -> str:
+        """MCP tool endpoint that runs the same agent workflow as /agent/chat."""
+        try:
+            payload = json.loads(context) if context else {}
+            arguments = payload.get("arguments", {}) if isinstance(payload, dict) else {}
+
+            prompt = arguments.get("prompt") if isinstance(arguments, dict) else None
+            if not isinstance(prompt, str) or not prompt.strip():
+                return json.dumps({"error": "Missing 'prompt'"})
+
+            session_id = _extract_mcp_session_id(payload) if isinstance(payload, dict) else None
+
+            result = await run_copilot_agent(prompt.strip(), session_id=session_id)
+
+            return json.dumps(
                 {
                     "session_id": result.session_id,
                     "response": result.content,
                     "response_intermediate": result.content_intermediate,
                     "tool_calls": result.tool_calls,
                 }
-            ),
-            media_type="application/json",
-            headers={"x-ms-session-id": result.session_id},
-        )
-        return response
+            )
+        except Exception as exc:
+            error_msg = str(exc) if str(exc) else f"{type(exc).__name__}: {repr(exc)}"
+            logging.error(f"MCP tool error: {error_msg}")
+            return json.dumps({"error": error_msg})
 
-    except Exception as e:
-        error_msg = str(e) if str(e) else f"{type(e).__name__}: {repr(e)}"
-        logging.error(f"Chat error: {error_msg}")
-        return Response(
-            json.dumps({"error": error_msg}), status_code=500, media_type="application/json"
-        )
-
-
-@app.route(route="agent/chatstream", methods=["POST"])
-async def chat_stream(req: Request) -> StreamingResponse:
-    """
-    Streaming chat endpoint - send a prompt, receive SSE events.
-
-    POST /agent/chat/stream
-    Headers:
-        x-ms-session-id (optional): Session ID for resuming a previous session
-    Body:
-    {
-        "prompt": "What is 2+2?"
-    }
-
-    Response: text/event-stream with events:
-        data: {"type": "session", "session_id": "..."}
-        data: {"type": "delta", "content": "partial text"}
-        data: {"type": "tool_start", "tool_name": "...", "tool_call_id": "..."}
-        data: {"type": "message", "content": "full message"}
-        data: {"type": "done"}
-    """
-    try:
-        body = await req.json()
-        prompt = body.get("prompt")
-
-        if not prompt:
-            async def error_gen():
-                yield f"data: {json.dumps({'type': 'error', 'content': 'Missing prompt'})}\n\n"
-            return StreamingResponse(error_gen(), media_type="text/event-stream")
-
-        session_id = req.headers.get("x-ms-session-id")
-        return StreamingResponse(
-            run_copilot_agent_stream(prompt, session_id=session_id),
-            media_type="text/event-stream",
-        )
-
-    except Exception as e:
-        error_msg = str(e) if str(e) else f"{type(e).__name__}: {repr(e)}"
-        logging.error(f"Chat stream error: {error_msg}")
-        async def error_gen():
-            yield f"data: {json.dumps({'type': 'error', 'content': error_msg})}\n\n"
-        return StreamingResponse(error_gen(), media_type="text/event-stream")
-
-
-@app.mcp_tool_trigger(
-    arg_name="context",
-    tool_name=_MCP_AGENT_TOOL_NAME,
-    description=_MCP_AGENT_TOOL_DESCRIPTION,
-    tool_properties=_MCP_AGENT_TOOL_PROPERTIES,
-)
-async def mcp_agent_chat(context: str) -> str:
-    """MCP tool endpoint that runs the same agent workflow as /agent/chat."""
-    try:
-        payload = json.loads(context) if context else {}
-        arguments = payload.get("arguments", {}) if isinstance(payload, dict) else {}
-
-        prompt = arguments.get("prompt") if isinstance(arguments, dict) else None
-        if not isinstance(prompt, str) or not prompt.strip():
-            return json.dumps({"error": "Missing 'prompt'"})
-
-        session_id = _extract_mcp_session_id(payload) if isinstance(payload, dict) else None
-
-        result = await run_copilot_agent(prompt.strip(), session_id=session_id)
-
-        return json.dumps(
-            {
-                "session_id": result.session_id,
-                "response": result.content,
-                "response_intermediate": result.content_intermediate,
-                "tool_calls": result.tool_calls,
-            }
-        )
-    except Exception as exc:
-        error_msg = str(exc) if str(exc) else f"{type(exc).__name__}: {repr(exc)}"
-        logging.error(f"MCP tool error: {error_msg}")
-        return json.dumps({"error": error_msg})
+    return app

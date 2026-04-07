@@ -4,7 +4,7 @@ import json
 import re
 from urllib.parse import quote
 
-from copilot import Tool, ToolInvocation, ToolResult
+from copilot.tools import Tool, ToolInvocation, ToolResult
 
 from .arm import ArmClient
 from .connectors import ConnectionInfo, ParsedOperation, ParsedParameter

@@ -2,23 +2,8 @@
 
 name: functions-markdown-agent
 version: 0.1.0
-hooks:
-  prepackage:
-    windows:
-      shell: pwsh
-      run: ./infra/hooks/prepackage.ps1
-    posix:
-      shell: sh
-      run: ./infra/hooks/prepackage.sh
-  postpackage:
-    windows:
-      shell: pwsh
-      run: Remove-Item -Recurse -Force ./infra/tmp -ErrorAction SilentlyContinue
-    posix:
-      shell: sh
-      run: rm -rf ./infra/tmp
 services:
   api:
-    project: ./infra/tmp
+    project: ./src
     language: python
     host: function

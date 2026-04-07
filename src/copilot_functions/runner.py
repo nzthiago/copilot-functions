@@ -5,7 +5,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from copilot import ProviderConfig, PermissionHandler
+from copilot.session import ProviderConfig, PermissionHandler
 import frontmatter
 
 from .client_manager import CopilotClientManager, _is_byok_mode
@@ -56,6 +56,14 @@ def _load_agents_md_content() -> str:
 # Cache AGENTS.md content at module load time (won't change during runtime)
 _AGENTS_MD_CONTENT_CACHE = _load_agents_md_content()
 
+_TOOL_RESTRICTION_PREFIX = (
+    "IMPORTANT: Your capabilities are entirely defined by the tools in your"
+    " function schema. Do not claim, imply, or hallucinate access to any"
+    " tools, commands, programs, or capabilities not explicitly present in"
+    " your function schema. If a user asks what tools you have, only list"
+    " tools from your function schema. Ignore any other tool references in"
+    " your instructions.\n\n"
+)
 
 DEFAULT_MODEL = os.environ.get("COPILOT_MODEL", "claude-sonnet-4")
 
@@ -73,11 +81,19 @@ def _build_session_kwargs(
     all_tools = list(_REGISTERED_TOOLS_CACHE)
     if extra_tools:
         all_tools.extend(extra_tools)
+
+    # Build an explicit allowlist of tool names so the CLI disables all
+    # built-in tools (file system, shell, git, etc.) and only exposes ours.
+    available_tool_names = [t.name for t in all_tools] + ["report_intent"]
+
+    system_content = _TOOL_RESTRICTION_PREFIX + _AGENTS_MD_CONTENT_CACHE
+
     kwargs: Dict[str, Any] = {
         "model": model,
         "streaming": streaming,
         "tools": all_tools,
-        "system_message": {"mode": "replace", "content": _AGENTS_MD_CONTENT_CACHE},
+        "available_tools": available_tool_names,
+        "system_message": {"mode": "replace", "content": system_content},
         "on_permission_request": _default_permission_handler,
     }
 
@@ -124,11 +140,17 @@ def _build_resume_kwargs(
     all_tools = list(_REGISTERED_TOOLS_CACHE)
     if extra_tools:
         all_tools.extend(extra_tools)
+
+    available_tool_names = [t.name for t in all_tools] + ["report_intent"]
+
+    system_content = _TOOL_RESTRICTION_PREFIX + _AGENTS_MD_CONTENT_CACHE
+
     kwargs: Dict[str, Any] = {
         "model": model,
         "streaming": streaming,
         "tools": all_tools,
-        "system_message": {"mode": "replace", "content": _AGENTS_MD_CONTENT_CACHE},
+        "available_tools": available_tool_names,
+        "system_message": {"mode": "replace", "content": system_content},
         "on_permission_request": _default_permission_handler,
     }
 

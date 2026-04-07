@@ -19,6 +19,15 @@
     },
     "modelSelection": {
       "value": "${MODEL_SELECTION}"
+    },
+    "teamsConnectionId": {
+      "value": "${TEAMS_CONNECTION_ID}"
+    },
+    "teamsTeamId": {
+      "value": "${TEAMS_TEAM_ID}"
+    },
+    "teamsChannelId": {
+      "value": "${TEAMS_CHANNEL_ID}"
     }
   }
 }

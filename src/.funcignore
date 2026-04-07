@@ -36,7 +36,3 @@ __pycache__/
 
 # Logs
 *.log
-
-# Node.js (keep package.json for reference)
-node_modules/
-package-lock.json

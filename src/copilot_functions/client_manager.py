@@ -5,8 +5,6 @@ from typing import Optional
 
 from copilot import CopilotClient, SubprocessConfig
 
-from .cli_path import get_copilot_cli_path
-
 
 def _is_byok_mode() -> bool:
     """Check if BYO key (Microsoft Foundry) environment variables are configured."""
@@ -37,25 +35,22 @@ class CopilotClientManager:
         manager = cls()
         async with manager._lock:
             if manager._client is None or not manager._started:
-                cli_path = get_copilot_cli_path()
-
                 if _is_byok_mode():
                     logging.info("BYOK mode: using Microsoft Foundry (no GitHub token)")
                     manager._client = CopilotClient(
-                        SubprocessConfig(cli_path=cli_path)
+                        SubprocessConfig()
                     )
                 else:
                     github_token = os.environ.get("GITHUB_TOKEN")
                     manager._client = CopilotClient(
                         SubprocessConfig(
-                            cli_path=cli_path,
                             github_token=github_token,
                         )
                     )
 
                 await manager._client.start()
                 manager._started = True
-                logging.info(f"CopilotClient singleton started (CLI: {cli_path}, BYOK: {_is_byok_mode()})")
+                logging.info(f"CopilotClient singleton started (BYOK: {_is_byok_mode()})")
         return manager._client
 
     @classmethod

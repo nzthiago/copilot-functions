@@ -66,6 +66,15 @@ param githubToken string
 
 param aiFoundryName string = ''
 
+@description('ARM resource ID of the Teams API Connection for connector triggers and tools.')
+param teamsConnectionId string = ''
+
+@description('Microsoft Teams team GUID for the channel message trigger.')
+param teamsTeamId string = ''
+
+@description('Microsoft Teams channel ID for the channel message trigger.')
+param teamsChannelId string = ''
+
 @description('Model to use. GitHub models run via the Copilot SDK (no extra infra). Foundry models deploy a Microsoft Foundry account + model.')
 @allowed([
   // GitHub Copilot models (no additional infrastructure needed)
@@ -178,6 +187,15 @@ module api './app/api.bicep' = {
       } : {},
       isGitHubModel ? {
         COPILOT_MODEL: selectedModelName
+      } : {},
+      !empty(teamsConnectionId) ? {
+        TEAMS_CONNECTION_ID: teamsConnectionId
+      } : {},
+      !empty(teamsTeamId) ? {
+        TEAMS_TEAM_ID: teamsTeamId
+      } : {},
+      !empty(teamsChannelId) ? {
+        TEAMS_CHANNEL_ID: teamsChannelId
       } : {}
     )
     virtualNetworkSubnetId: vnetEnabled ? serviceVirtualNetwork!.outputs.appSubnetID : ''

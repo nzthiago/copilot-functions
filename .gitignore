@@ -69,8 +69,3 @@ build/
 
 .azure/
 tmp/
-
-# Sample related gitnores
-infra/assets/.gitignore
-infra/assets/.vscode/
-infra/assets/requirements.txt

@@ -1,0 +1,11 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "python",
+    "GITHUB_TOKEN": "<your-github-pat>",
+    "TEAMS_CONNECTION_ID": "/subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.Web/connections/teams",
+    "TEAMS_TEAM_ID": "<team-guid>",
+    "TEAMS_CHANNEL_ID": "<channel-id>"
+  }
+}

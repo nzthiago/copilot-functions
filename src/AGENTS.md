@@ -4,14 +4,14 @@ description: An agent that responds to messages on a Teams channel
 functions:
   - name: teams_chat_agent
     trigger: teams_new_channel_message
-    connection_id: /subscriptions/ef6e1243-d48a-417e-8e6d-40cd96e110fd/resourceGroups/20260309-test-connectors/providers/Microsoft.Web/connections/teams
-    team_id: f9beb78b-5f1b-4819-a5a0-dabdb6805b12
-    channel_id: 19:jzK7GYRu61Dc03dw_dwpNoaYQCRsEs0wyLfg9BHP6Yo1@thread.tacv2
+    connection_id: $TEAMS_CONNECTION_ID
+    team_id: $TEAMS_TEAM_ID
+    channel_id: $TEAMS_CHANNEL_ID
     min_interval: 30
     max_interval: 90
     logger: true
 tools_from_connections:
-  - connection_id: /subscriptions/ef6e1243-d48a-417e-8e6d-40cd96e110fd/resourceGroups/20260309-test-connectors/providers/Microsoft.Web/connections/teams
+  - connection_id: $TEAMS_CONNECTION_ID
 ---
 
 You're an agent that is called when there's a new message in a Teams channel. Reply to the message to the best of your abilities.
