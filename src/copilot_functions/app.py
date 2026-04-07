@@ -437,7 +437,7 @@ def create_function_app() -> func.FunctionApp:
         if ignored:
             return Response("Not found", status_code=404)
 
-        index_path = _APP_ROOT / "public" / "index.html"
+        index_path = Path(__file__).parent / "public" / "index.html"
         if not index_path.exists():
             return Response("index.html not found", status_code=404)
 
