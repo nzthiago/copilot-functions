@@ -22,7 +22,7 @@ from copilot import define_tool
 from copilot.tools import Tool, ToolInvocation, ToolResult
 from pydantic import BaseModel, Field
 
-from .connector_tool_cache import _resolve_env_var
+from .config import resolve_env_var
 
 _API_VERSION = "2025-10-02-preview"
 
@@ -195,7 +195,7 @@ class _SandboxCache:
         if not raw_endpoint:
             logging.warning("execution_sandbox: missing 'session_pool_management_endpoint', skipping")
             return
-        self._endpoint = _resolve_env_var(str(raw_endpoint))
+        self._endpoint = resolve_env_var(str(raw_endpoint))
         if not self._endpoint or self._endpoint.startswith("$") or self._endpoint.startswith("%"):
             logging.warning(
                 f"execution_sandbox: could not resolve endpoint '{raw_endpoint}', skipping"

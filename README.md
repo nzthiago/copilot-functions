@@ -182,7 +182,7 @@ functions:
 - `team_id` and `channel_id` identify the Teams channel to monitor.
 - `min_interval` (optional, default: 60) — polling interval in seconds after items are found (fastest rate).
 - `max_interval` (optional, default: 300) — maximum polling interval in seconds when idle (backoff cap).
-- All string values support `%ENV_VAR%` or `$ENV_VAR` syntax for environment variable substitution.
+- `connection_id`, `team_id`, and `channel_id` support [environment variable substitution](#environment-variable-substitution).
 - When the trigger fires, the full Teams message JSON payload is passed as the prompt to the agent.
 
 The connector trigger uses the [azure-functions-connectors](https://github.com/anthonychu/azure-functions-connectors-python) package, which polls the connector for new items and dispatches them via Azure Storage Queues.
@@ -200,6 +200,22 @@ The connector trigger uses the [azure-functions-connectors](https://github.com/a
 - `name` is optional for all trigger types (a safe unique name is generated if omitted).
 - `logger` defaults to `true`. When enabled, the agent's full output is logged including `session_id`, `response`, `response_intermediate`, and `tool_calls`.
 - All trigger functions are registered at startup from frontmatter and run in the same runtime as `/agent/chat`.
+
+### Environment Variable Substitution
+
+Certain frontmatter fields support `%ENV_VAR%` or `$ENV_VAR` syntax to reference environment variables (app settings). Substitution is **full-string only** — the entire value must be a single variable reference (partial substitution like `prefix$VAR` is not supported).
+
+**Fields that support substitution** (resource identifiers and endpoints):
+
+| Section | Field |
+|---------|-------|
+| `functions[]` | `connection_id`, `team_id`, `channel_id` |
+| `tools_from_connections[]` | `connection_id` |
+| `execution_sandbox` | `session_pool_management_endpoint` |
+
+Fields like `name`, `trigger`, `schedule`, `prompt`, `min_interval`, `max_interval`, and `logger` do **not** support substitution.
+
+If an environment variable is not set, the original string is returned unchanged and a warning is logged.
 
 ## Dynamic Tools from Azure Connectors
 

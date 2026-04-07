@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 from typing import Optional
 
 # Default session state directory used by the Copilot CLI
@@ -41,3 +42,46 @@ def session_exists(config_dir: Optional[str], session_id: str) -> bool:
     exists = os.path.isdir(session_path)
     logging.info(f"Session '{session_id}' exists at {session_path}: {exists}")
     return exists
+
+
+# ---------------------------------------------------------------------------
+# Environment variable substitution for AGENTS.md frontmatter values
+# ---------------------------------------------------------------------------
+
+_PERCENT_PATTERN = re.compile(r"^%([^%]+)%$")
+_DOLLAR_PATTERN = re.compile(r"^\$([A-Za-z_][A-Za-z0-9_]*)$")
+
+
+def resolve_env_var(value: str) -> str:
+    """Resolve a frontmatter value that is a single env-var reference.
+
+    Supported syntaxes (full-string match only — partial substitution
+    such as ``prefix$VAR`` is intentionally **not** supported):
+
+      - ``%VAR_NAME%`` — value is entirely ``%…%``
+      - ``$VAR_NAME``  — value is entirely ``$IDENT``
+
+    If the value does not match either pattern, or the referenced
+    environment variable is not set, the original string is returned
+    unchanged.
+
+    The following AGENTS.md frontmatter fields are resolved through
+    this function (all represent external resource identifiers or
+    endpoints):
+
+      - ``functions[].connection_id``
+      - ``functions[].team_id``
+      - ``functions[].channel_id``
+      - ``tools_from_connections[].connection_id``
+      - ``execution_sandbox.session_pool_management_endpoint``
+
+    Fields that should **not** use substitution (identifiers, literals,
+    or user-facing text): ``name``, ``description``, ``trigger``,
+    ``schedule``, ``prompt``, ``min_interval``, ``max_interval``,
+    ``logger``.
+    """
+    stripped = value.strip()
+    m = _PERCENT_PATTERN.match(stripped) or _DOLLAR_PATTERN.match(stripped)
+    if m:
+        return os.environ.get(m.group(1), value)
+    return value

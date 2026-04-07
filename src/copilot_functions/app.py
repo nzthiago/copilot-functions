@@ -14,7 +14,8 @@ from typing import Any, Dict, List
 import azure.functions as func
 import frontmatter
 
-from .connector_tool_cache import _resolve_env_var, configure_connector_tools
+from .config import resolve_env_var
+from .connector_tool_cache import configure_connector_tools
 from .runner import run_copilot_agent, run_copilot_agent_stream
 from .sandbox import configure_sandbox
 from azurefunctions.extensions.http.fastapi import Request, Response, StreamingResponse
@@ -298,9 +299,20 @@ def _register_teams_trigger(
         logging.warning(f"Skipping AGENTS function #{index}: missing required 'channel_id' for teams_new_channel_message")
         return
 
-    connection_id = _resolve_env_var(str(connection_id_raw))
-    team_id = _resolve_env_var(str(team_id_raw))
-    channel_id = _resolve_env_var(str(channel_id_raw))
+    connection_id = resolve_env_var(str(connection_id_raw))
+    team_id = resolve_env_var(str(team_id_raw))
+    channel_id = resolve_env_var(str(channel_id_raw))
+
+    for label, val, raw in [
+        ("connection_id", connection_id, connection_id_raw),
+        ("team_id", team_id, team_id_raw),
+        ("channel_id", channel_id, channel_id_raw),
+    ]:
+        if not val or val.startswith("%") or val.startswith("$"):
+            logging.warning(
+                f"Skipping AGENTS function #{index}: could not resolve {label} '{raw}'"
+            )
+            return
 
     # Optional polling interval overrides
     min_interval = spec.get("min_interval")

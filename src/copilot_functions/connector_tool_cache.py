@@ -2,28 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
-import re
 from typing import Any, Dict, List
 
 from .arm import ArmClient
+from .config import resolve_env_var
 from .connectors import load_connection
 from .connector_tools import generate_tools
-
-
-def _resolve_env_var(value: str) -> str:
-    """Resolve %VAR% or $VAR patterns to environment variable values."""
-    def _replace_percent(match):
-        var_name = match.group(1)
-        return os.environ.get(var_name, match.group(0))
-
-    def _replace_dollar(match):
-        var_name = match.group(1)
-        return os.environ.get(var_name, match.group(0))
-
-    value = re.sub(r"%([^%]+)%", _replace_percent, value)
-    value = re.sub(r"\$([A-Za-z_][A-Za-z0-9_]*)", _replace_dollar, value)
-    return value
 
 
 class _ConnectorToolCache:
@@ -62,7 +46,7 @@ class _ConnectorToolCache:
                     logging.warning("tools_from_connections entry missing 'connection_id', skipping")
                     continue
 
-                connection_id = _resolve_env_var(str(raw_connection_id))
+                connection_id = resolve_env_var(str(raw_connection_id))
                 if not connection_id or connection_id.startswith("%") or connection_id.startswith("$"):
                     logging.warning(f"tools_from_connections: could not resolve connection_id '{raw_connection_id}', skipping")
                     continue
