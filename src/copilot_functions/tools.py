@@ -3,6 +3,7 @@ import inspect
 import json
 import logging
 import os
+import re
 import sys
 import tempfile
 from typing import Callable, List, Optional
@@ -84,55 +85,227 @@ _ALLOWED_READ_DIRS = [
 ]
 
 
-class ReadFileParams(BaseModel):
-    path: str = Field(description="Absolute path to the file to read")
-    start_line: Optional[int] = Field(default=None, description="1-based start line number. If omitted, reads from the beginning.")
-    end_line: Optional[int] = Field(default=None, description="1-based end line number (inclusive). If omitted, reads to the end.")
-
-
-# This tool is needed because for security reasons, we disabled Copilot's built-in file reading capability that allows reading any file on disk.
-# Often Copilot writes long tool output to files and the agent needs a way to read it back.
-@define_tool(description=(
-    "Read a file from the host system by absolute path. Optionally specify"
-    " start_line and end_line (1-based, inclusive) to read a portion of the file.\n"
-    "\n"
-    "IMPORTANT: This reads files on the local system, such as tool call results"
-    " that are too long."
-))
-async def read_file(params: ReadFileParams) -> str:
-    requested = os.path.normpath(params.path)
-
+def _check_access(path: str) -> Optional[str]:
+    """Return an error JSON string if the path is not allowed, else None."""
+    requested = os.path.normpath(path)
     allowed = any(
         requested.startswith(d + os.sep) or requested == d
         for d in _ALLOWED_READ_DIRS
     )
     if not allowed:
         return json.dumps({"error": "Access denied: path is not in an allowed directory"})
-
     if not os.path.isfile(requested):
-        return json.dumps({"error": f"File not found: {params.path}"})
+        return json.dumps({"error": f"File not found: {path}"})
+    return None
 
-    with open(requested, "r", encoding="utf-8", errors="replace") as f:
-        lines = f.readlines()
 
+def _read_lines(path: str) -> List[str]:
+    """Read all lines from a file."""
+    with open(os.path.normpath(path), "r", encoding="utf-8", errors="replace") as f:
+        return f.readlines()
+
+
+# -- view (read file with optional line range) -----------------------------
+
+class ViewParams(BaseModel):
+    path: str = Field(description="Absolute path to the file to read")
+    start_line: Optional[int] = Field(default=None, description="1-based start line number. If omitted, reads from the beginning.")
+    end_line: Optional[int] = Field(default=None, description="1-based end line number (inclusive). If omitted, reads to the end.")
+
+
+@define_tool(
+    description=(
+        "View a file on the local system by absolute path. Use view_range"
+        " (start_line/end_line) to read specific sections. Use this to read"
+        " files that other tools have saved to the temp directory."
+    ),
+    overrides_built_in_tool=True,
+)
+async def view(params: ViewParams) -> str:
+    err = _check_access(params.path)
+    if err:
+        return err
+
+    lines = _read_lines(params.path)
     total = len(lines)
     start = (params.start_line or 1) - 1
     end = params.end_line or total
-
     start = max(0, min(start, total))
     end = max(start, min(end, total))
-
-    selected = lines[start:end]
-    content = "".join(selected)
 
     return json.dumps({
         "total_lines": total,
         "start_line": start + 1,
         "end_line": end,
-        "content": content,
+        "content": "".join(lines[start:end]),
     })
 
 
-_BUILTIN_TOOLS = [read_file]
+# -- head (first N lines) -------------------------------------------------
+
+class HeadParams(BaseModel):
+    path: str = Field(description="Absolute path to the file")
+    lines: Optional[int] = Field(default=10, description="Number of lines to return from the start (default 10)")
+
+
+@define_tool(description="Show the first N lines of a file on the local system (default 10).")
+async def head(params: HeadParams) -> str:
+    err = _check_access(params.path)
+    if err:
+        return err
+
+    all_lines = _read_lines(params.path)
+    n = max(1, params.lines or 10)
+    return json.dumps({
+        "total_lines": len(all_lines),
+        "lines_returned": min(n, len(all_lines)),
+        "content": "".join(all_lines[:n]),
+    })
+
+
+# -- tail (last N lines) --------------------------------------------------
+
+class TailParams(BaseModel):
+    path: str = Field(description="Absolute path to the file")
+    lines: Optional[int] = Field(default=10, description="Number of lines to return from the end (default 10)")
+
+
+@define_tool(description="Show the last N lines of a file on the local system (default 10).")
+async def tail(params: TailParams) -> str:
+    err = _check_access(params.path)
+    if err:
+        return err
+
+    all_lines = _read_lines(params.path)
+    n = max(1, params.lines or 10)
+    selected = all_lines[-n:] if n < len(all_lines) else all_lines
+    return json.dumps({
+        "total_lines": len(all_lines),
+        "lines_returned": len(selected),
+        "content": "".join(selected),
+    })
+
+
+# -- grep (search file contents) ------------------------------------------
+
+class GrepParams(BaseModel):
+    path: str = Field(description="Absolute path to the file to search")
+    pattern: str = Field(description="Search pattern (plain text or regex)")
+    is_regex: Optional[bool] = Field(default=False, description="Treat pattern as a regex (default: plain text)")
+    ignore_case: Optional[bool] = Field(default=True, description="Case-insensitive search (default: true)")
+    max_results: Optional[int] = Field(default=50, description="Maximum number of matching lines to return (default 50)")
+
+
+@define_tool(
+    description=(
+        "Search for a pattern in a file on the local system. Returns matching"
+        " lines with line numbers. Supports plain text and regex patterns."
+    ),
+    overrides_built_in_tool=True,
+)
+async def grep(params: GrepParams) -> str:
+    err = _check_access(params.path)
+    if err:
+        return err
+
+    lines = _read_lines(params.path)
+    flags = re.IGNORECASE if params.ignore_case else 0
+    limit = max(1, params.max_results or 50)
+
+    matches = []
+    for i, line in enumerate(lines, 1):
+        try:
+            if params.is_regex:
+                found = re.search(params.pattern, line, flags)
+            else:
+                if params.ignore_case:
+                    found = params.pattern.lower() in line.lower()
+                else:
+                    found = params.pattern in line
+        except re.error as e:
+            return json.dumps({"error": f"Invalid regex: {e}"})
+
+        if found:
+            matches.append({"line_number": i, "content": line.rstrip("\n\r")})
+            if len(matches) >= limit:
+                break
+
+    return json.dumps({
+        "total_lines": len(lines),
+        "matches_found": len(matches),
+        "truncated": len(matches) >= limit,
+        "matches": matches,
+    })
+
+
+# -- jq (query JSON files) ------------------------------------------------
+
+class JqParams(BaseModel):
+    path: str = Field(description="Absolute path to a JSON file")
+    query: str = Field(description="Dot-separated path to extract (e.g. '.results', '.data.items', '.[0].name'). Use '.' for the entire document.")
+    max_items: Optional[int] = Field(default=20, description="If the result is an array, return at most this many items (default 20)")
+
+
+@define_tool(description=(
+    "Query a JSON file on the local system using a dot-path expression."
+    " Examples: '.' (entire doc), '.key', '.items.[0].name', '.data.results'."
+))
+async def jq(params: JqParams) -> str:
+    err = _check_access(params.path)
+    if err:
+        return err
+
+    try:
+        with open(os.path.normpath(params.path), "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except json.JSONDecodeError as e:
+        return json.dumps({"error": f"Invalid JSON: {e}"})
+
+    # Navigate the dot-path
+    query = params.query.strip().lstrip(".")
+    current = data
+    if query:
+        for part in query.split("."):
+            if not part:
+                continue
+            # Handle array index: [0], [1], etc.
+            idx_match = re.match(r"^\[(\d+)\]$", part)
+            if idx_match:
+                idx = int(idx_match.group(1))
+                if not isinstance(current, list) or idx >= len(current):
+                    return json.dumps({"error": f"Index {idx} out of range (length {len(current) if isinstance(current, list) else 'N/A'})"})
+                current = current[idx]
+            elif isinstance(current, dict) and part in current:
+                current = current[part]
+            elif isinstance(current, list):
+                # Try array index without brackets
+                try:
+                    current = current[int(part)]
+                except (ValueError, IndexError):
+                    return json.dumps({"error": f"Key '{part}' not found. Available keys: {list(current[0].keys()) if current and isinstance(current[0], dict) else 'N/A'}"})
+            else:
+                available = list(current.keys()) if isinstance(current, dict) else type(current).__name__
+                return json.dumps({"error": f"Key '{part}' not found. Available: {available}"})
+
+    # Truncate arrays
+    limit = max(1, params.max_items or 20)
+    truncated = False
+    if isinstance(current, list) and len(current) > limit:
+        total_items = len(current)
+        current = current[:limit]
+        truncated = True
+    else:
+        total_items = len(current) if isinstance(current, list) else None
+
+    result = {"result": current}
+    if total_items is not None:
+        result["total_items"] = total_items
+    if truncated:
+        result["truncated"] = True
+        result["items_returned"] = limit
+    return json.dumps(result, indent=2, default=str)
+
+
+_BUILTIN_TOOLS = [view, head, tail, grep, jq]
 
 _REGISTERED_TOOLS_CACHE = discover_tools() + _BUILTIN_TOOLS
