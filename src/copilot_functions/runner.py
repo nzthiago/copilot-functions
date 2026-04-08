@@ -60,10 +60,22 @@ _AGENTS_MD_CONTENT_CACHE = _load_agents_md_content()
 
 DEFAULT_MODEL = os.environ.get("COPILOT_MODEL", "claude-sonnet-4")
 
-# Built-in CLI tools to keep enabled alongside custom tools.
-# "skill" is required for loading skills from SKILL.md files.
-# "report_intent" is used by the CLI for session intent tracking.
-_ALLOWED_BUILTIN_TOOLS = ["skill", "report_intent"]
+# Built-in CLI tools to disable for security.
+# These are blocked regardless of whether MCP servers are configured.
+_EXCLUDED_BUILTIN_TOOLS = [
+    # Shell access
+    "bash", "read_bash", "write_bash", "stop_bash", "list_bash",
+    # Built-in file tools (we provide our own scoped implementations)
+    "create", "edit", "glob",
+    # Built-in SQL (conflicts with connector SQL tools)
+    "sql",
+    # Sub-agents
+    "task", "read_agent", "list_agents",
+    # Web fetching (use MCP or execute_python instead)
+    "web_fetch",
+    # Not needed
+    "report_intent",
+]
 
 _TOOL_RESTRICTION_PREFIX = (
     "IMPORTANT: Your capabilities are entirely defined by the tools in your"
@@ -89,15 +101,13 @@ def _build_session_kwargs(
     if extra_tools:
         all_tools.extend(extra_tools)
 
-    available_tool_names = [t.name for t in all_tools] + _ALLOWED_BUILTIN_TOOLS
-
     system_content = _TOOL_RESTRICTION_PREFIX + _AGENTS_MD_CONTENT_CACHE
 
     kwargs: Dict[str, Any] = {
         "model": model,
         "streaming": streaming,
         "tools": all_tools,
-        "available_tools": available_tool_names,
+        "excluded_tools": _EXCLUDED_BUILTIN_TOOLS,
         "system_message": {"mode": "replace", "content": system_content},
         "on_permission_request": _default_permission_handler,
     }
@@ -146,18 +156,15 @@ def _build_resume_kwargs(
     if extra_tools:
         all_tools.extend(extra_tools)
 
-    available_tool_names = [t.name for t in all_tools] + _ALLOWED_BUILTIN_TOOLS
-
     system_content = _TOOL_RESTRICTION_PREFIX + _AGENTS_MD_CONTENT_CACHE
 
     kwargs: Dict[str, Any] = {
         "model": model,
         "streaming": streaming,
         "tools": all_tools,
-        "available_tools": available_tool_names,
+        "excluded_tools": _EXCLUDED_BUILTIN_TOOLS,
         "system_message": {"mode": "replace", "content": system_content},
         "on_permission_request": _default_permission_handler,
-
     }
 
     # If Microsoft Foundry BYOK is configured, add provider config
