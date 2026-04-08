@@ -4,6 +4,10 @@ ACA Dynamic Sessions sandbox — execute_python tool.
 Provides an ``execute_python`` Copilot SDK tool backed by Azure Container Apps
 dynamic sessions (code-interpreter pools).  Configured via the
 ``execution_sandbox`` block in agent frontmatter.
+
+Each agent can have its own session pool endpoint.  Within a conversation,
+the ACA session ID is derived from the Copilot session ID so that state
+(variables, imports, files, browser pages) persists across calls.
 """
 
 from __future__ import annotations
@@ -13,14 +17,11 @@ import json
 import logging
 import re
 import urllib.parse
-from typing import Any, Dict, Optional
-from uuid import uuid4
+from typing import Any, Dict, List, Optional
 
 import aiohttp
 from azure.identity.aio import DefaultAzureCredential, get_bearer_token_provider
-from copilot import define_tool
 from copilot.tools import Tool, ToolInvocation, ToolResult
-from pydantic import BaseModel, Field
 
 from .config import resolve_env_var
 
@@ -181,122 +182,107 @@ async def _execute_code(
 
 
 # ---------------------------------------------------------------------------
-# Sandbox cache (singleton, like _ConnectorToolCache)
+# Factory: create per-agent execute_python tool
 # ---------------------------------------------------------------------------
 
+# Shared credential and HTTP session (created lazily, reused across agents)
+_credential: Optional[DefaultAzureCredential] = None
+_token_provider = None
+_http_session: Optional[aiohttp.ClientSession] = None
+_init_lock = asyncio.Lock()
 
-class _SandboxCache:
-    """Lazy-init singleton for the execute_python tool."""
+# Track which ACA sessions have been set up (Playwright helper loaded)
+_setup_sessions: set[str] = set()
+_setup_lock = asyncio.Lock()
 
-    def __init__(self):
-        self._tools: list | None = None
-        self._endpoint: str = ""
-        self._lock = asyncio.Lock()
-        self._credential: Optional[DefaultAzureCredential] = None
-        self._token_provider = None
-        self._http_session: Optional[aiohttp.ClientSession] = None
 
-    def configure(self, config: Dict[str, Any]) -> None:
-        raw_endpoint = config.get("session_pool_management_endpoint", "")
-        if not raw_endpoint:
-            logging.warning("execution_sandbox: missing 'session_pool_management_endpoint', skipping")
+async def _ensure_shared_resources():
+    """Lazily create the shared credential, token provider, and HTTP session."""
+    global _credential, _token_provider, _http_session
+    if _token_provider is not None:
+        return
+    async with _init_lock:
+        if _token_provider is not None:
             return
-        self._endpoint = resolve_env_var(str(raw_endpoint))
-        if not self._endpoint or self._endpoint.startswith("$") or self._endpoint.startswith("%"):
-            logging.warning(
-                f"execution_sandbox: could not resolve endpoint '{raw_endpoint}', skipping"
+        _credential = DefaultAzureCredential()
+        _token_provider = get_bearer_token_provider(
+            _credential, "https://dynamicsessions.io/.default"
+        )
+        _http_session = aiohttp.ClientSession()
+        logging.info("execution_sandbox: shared credential, token provider, and HTTP session initialized")
+
+
+def create_sandbox_tools(config: Dict[str, Any]) -> List[Tool]:
+    """Create an execute_python tool for a specific agent's sandbox config.
+
+    Returns a list with one Tool, or an empty list if the config is invalid.
+    The endpoint is baked into the tool's closure.
+    """
+    raw_endpoint = config.get("session_pool_management_endpoint", "")
+    if not raw_endpoint:
+        logging.warning("execution_sandbox: missing 'session_pool_management_endpoint', skipping")
+        return []
+
+    endpoint = resolve_env_var(str(raw_endpoint))
+    if not endpoint or endpoint.startswith("$") or endpoint.startswith("%"):
+        logging.warning(f"execution_sandbox: could not resolve endpoint '{raw_endpoint}', skipping")
+        return []
+
+    logging.info(f"execution_sandbox: creating tool with endpoint {endpoint}")
+
+    async def _handle_execute_python(invocation: ToolInvocation) -> ToolResult:
+        await _ensure_shared_resources()
+
+        args = invocation.arguments or {}
+        code = args.get("code", "")
+        if not code.strip():
+            return ToolResult(
+                text_result_for_llm='{"error": "No code provided"}',
+                result_type="failure",
             )
-            self._endpoint = ""
-            return
-        logging.info(f"execution_sandbox: configured with endpoint {self._endpoint}")
 
-    async def get_tools(self) -> list:
-        if self._tools is not None:
-            return self._tools
+        # Use the Copilot session ID as the ACA session ID
+        # so state persists across execute_python calls in the same conversation
+        aca_session_id = invocation.session_id or "default"
+        logging.info(
+            f"execution_sandbox: executing code in ACA session {aca_session_id} "
+            f"(tool_call={invocation.tool_call_id})"
+        )
 
-        async with self._lock:
-            if self._tools is not None:
-                return self._tools
+        try:
+            # Pre-load Playwright helper on first call per session
+            async with _setup_lock:
+                if aca_session_id not in _setup_sessions:
+                    await _execute_code(endpoint, _ACA_SESSION_SETUP, aca_session_id, _token_provider, _http_session)
+                    _setup_sessions.add(aca_session_id)
 
-            if not self._endpoint:
-                self._tools = []
-                return self._tools
-
-            # Lazily create the credential, token provider, and shared HTTP session
-            self._credential = DefaultAzureCredential()
-            self._token_provider = get_bearer_token_provider(
-                self._credential, "https://dynamicsessions.io/.default"
+            # Execute the user's code
+            result = await _execute_code(endpoint, code, aca_session_id, _token_provider, _http_session)
+            logging.info(f"execution_sandbox: ACA session {aca_session_id} completed successfully")
+            return ToolResult(text_result_for_llm=result, result_type="success")
+        except Exception as exc:
+            error_msg = f"{type(exc).__name__}: {exc}"
+            logging.error(f"execution_sandbox: ACA session {aca_session_id} failed: {error_msg}")
+            return ToolResult(
+                text_result_for_llm=json.dumps({"error": error_msg}),
+                result_type="failure",
             )
-            self._http_session = aiohttp.ClientSession()
-            logging.info("execution_sandbox: credential, token provider, and HTTP session initialized")
 
-            endpoint = self._endpoint
-            token_provider = self._token_provider
-            http_session = self._http_session
-
-            async def _handle_execute_python(invocation: ToolInvocation) -> ToolResult:
-                args = invocation.arguments or {}
-                code = args.get("code", "")
-                if not code.strip():
-                    return ToolResult(
-                        text_result_for_llm='{"error": "No code provided"}',
-                        result_type="failure",
-                    )
-
-                # Fresh session per invocation
-                aca_session_id = str(uuid4())
-                logging.info(
-                    f"execution_sandbox: executing code in ACA session {aca_session_id} "
-                    f"(copilot_session={invocation.session_id}, tool_call={invocation.tool_call_id})"
-                )
-
-                try:
-                    # Pre-load Playwright helper
-                    await _execute_code(endpoint, _ACA_SESSION_SETUP, aca_session_id, token_provider, http_session)
-
-                    # Execute the user's code
-                    result = await _execute_code(endpoint, code, aca_session_id, token_provider, http_session)
-                    logging.info(
-                        f"execution_sandbox: ACA session {aca_session_id} completed successfully"
-                    )
-                    return ToolResult(text_result_for_llm=result, result_type="success")
-                except Exception as exc:
-                    error_msg = f"{type(exc).__name__}: {exc}"
-                    logging.error(f"execution_sandbox: ACA session {aca_session_id} failed: {error_msg}")
-                    return ToolResult(
-                        text_result_for_llm=json.dumps({"error": error_msg}),
-                        result_type="failure",
-                    )
-
-            tool = Tool(
-                name="execute_python",
-                description=_EXECUTE_PYTHON_DESCRIPTION,
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "code": {
-                            "type": "string",
-                            "description": "Python code to execute",
-                        },
-                    },
-                    "required": ["code"],
+    tool = Tool(
+        name="execute_python",
+        description=_EXECUTE_PYTHON_DESCRIPTION,
+        parameters={
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "description": "Python code to execute",
                 },
-                handler=_handle_execute_python,
-            )
+            },
+            "required": ["code"],
+        },
+        handler=_handle_execute_python,
+    )
 
-            self._tools = [tool]
-            logging.info("execution_sandbox: execute_python tool registered")
-            return self._tools
-
-
-_cache = _SandboxCache()
-
-
-def configure_sandbox(config: Dict[str, Any]) -> None:
-    """Configure the sandbox from ``execution_sandbox`` frontmatter."""
-    _cache.configure(config)
-
-
-async def get_sandbox_tools() -> list:
-    """Return the sandbox tools (lazy-init on first call)."""
-    return await _cache.get_tools()
+    logging.info("execution_sandbox: execute_python tool created")
+    return [tool]

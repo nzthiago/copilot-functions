@@ -22,7 +22,7 @@ import frontmatter
 from .config import get_app_root, resolve_env_var
 from .connector_tool_cache import configure_connector_tools
 from .runner import run_copilot_agent, run_copilot_agent_stream
-from .sandbox import configure_sandbox
+from .sandbox import create_sandbox_tools
 from azurefunctions.extensions.http.fastapi import Request, Response, StreamingResponse
 
 # Resolve the application root (parent of this package directory, i.e. ``src/``)
@@ -174,14 +174,16 @@ def _register_triggered_agents(app: func.FunctionApp) -> None:
             suffix += 1
         registered_names.add(function_name)
 
-        # Per-agent connector tools and sandbox (configure globally)
+        # Per-agent connector tools (additive, deduplicated globally)
         agent_connections = metadata.get("tools_from_connections")
         if isinstance(agent_connections, list):
             configure_connector_tools(agent_connections)
 
+        # Per-agent sandbox tools
+        agent_sandbox_tools = []
         agent_sandbox = metadata.get("execution_sandbox")
         if isinstance(agent_sandbox, dict):
-            configure_sandbox(agent_sandbox)
+            agent_sandbox_tools = create_sandbox_tools(agent_sandbox)
 
         # Determine if this is a built-in trigger or connector trigger
         # Dot notation routes to the connectors library (e.g. "teams.new_channel_message_trigger").
@@ -193,12 +195,14 @@ def _register_triggered_agents(app: func.FunctionApp) -> None:
             connectors_instance = _register_connector_agent(
                 app, connectors_instance, function_name, agent_name,
                 connector_type, trigger_params, content, should_log,
+                sandbox_tools=agent_sandbox_tools,
             )
         else:
             # Built-in Azure Functions trigger
             _register_builtin_agent(
                 app, function_name, agent_name,
                 trigger_type, trigger_params, content, should_log,
+                sandbox_tools=agent_sandbox_tools,
             )
 
 
@@ -210,6 +214,7 @@ def _register_builtin_agent(
     trigger_params: Dict[str, Any],
     prompt: str,
     should_log: bool,
+    sandbox_tools: Optional[list] = None,
 ) -> None:
     """Register a triggered agent using a built-in Azure Functions trigger."""
     # Get the decorator method from the FunctionApp
@@ -224,7 +229,7 @@ def _register_builtin_agent(
             trigger_params["schedule"] = _normalize_timer_schedule(str(trigger_params["schedule"]))
 
     # Create handler
-    handler = _make_agent_handler(function_name, agent_name, prompt, should_log)
+    handler = _make_agent_handler(function_name, agent_name, prompt, should_log, sandbox_tools=sandbox_tools)
 
     # Register with auto-generated arg_name
     trigger_params["arg_name"] = "trigger_data"
@@ -245,6 +250,7 @@ def _register_connector_agent(
     trigger_params: Dict[str, Any],
     prompt: str,
     should_log: bool,
+    sandbox_tools: Optional[list] = None,
 ):
     """Register a triggered agent using a connector trigger.
 
@@ -273,7 +279,7 @@ def _register_connector_agent(
         logging.warning(f"Skipping '{function_name}': could not resolve connector trigger '{trigger_type}'")
         return connectors_instance
 
-    handler = _make_agent_handler(function_name, agent_name, prompt, should_log)
+    handler = _make_agent_handler(function_name, agent_name, prompt, should_log, sandbox_tools=sandbox_tools)
 
     try:
         decorator_fn(**trigger_params)(handler)
@@ -289,6 +295,7 @@ def _make_agent_handler(
     agent_name: str,
     default_prompt: str,
     should_log: bool,
+    sandbox_tools: Optional[list] = None,
 ):
     """Create an async handler function for a triggered agent."""
     async def _handler(trigger_data):
@@ -320,7 +327,7 @@ def _make_agent_handler(
             else:
                 prompt = default_prompt
 
-            result = await run_copilot_agent(prompt)
+            result = await run_copilot_agent(prompt, sandbox_tools=sandbox_tools)
 
             if should_log:
                 logging.info(
@@ -378,10 +385,11 @@ def create_function_app() -> func.FunctionApp:
     if isinstance(tools_from_connections, list):
         configure_connector_tools(tools_from_connections)
 
-    # ---- Configure execution sandbox from frontmatter ----
+    # ---- Configure execution sandbox from main agent frontmatter ----
+    main_sandbox_tools: list = []
     execution_sandbox = metadata.get("execution_sandbox")
     if isinstance(execution_sandbox, dict):
-        configure_sandbox(execution_sandbox)
+        main_sandbox_tools = create_sandbox_tools(execution_sandbox)
 
     # ---- HTTP routes ----
 
@@ -431,7 +439,7 @@ def create_function_app() -> func.FunctionApp:
                 )
 
             session_id = req.headers.get("x-ms-session-id")
-            result = await run_copilot_agent(prompt, session_id=session_id)
+            result = await run_copilot_agent(prompt, session_id=session_id, sandbox_tools=main_sandbox_tools)
 
             response = Response(
                 json.dumps(
@@ -485,7 +493,7 @@ def create_function_app() -> func.FunctionApp:
 
             session_id = req.headers.get("x-ms-session-id")
             return StreamingResponse(
-                run_copilot_agent_stream(prompt, session_id=session_id),
+                run_copilot_agent_stream(prompt, session_id=session_id, sandbox_tools=main_sandbox_tools),
                 media_type="text/event-stream",
             )
 
@@ -516,7 +524,7 @@ def create_function_app() -> func.FunctionApp:
 
             session_id = _extract_mcp_session_id(payload) if isinstance(payload, dict) else None
 
-            result = await run_copilot_agent(prompt.strip(), session_id=session_id)
+            result = await run_copilot_agent(prompt.strip(), session_id=session_id, sandbox_tools=main_sandbox_tools)
 
             return json.dumps(
                 {

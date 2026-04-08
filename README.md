@@ -366,7 +366,24 @@ At startup (on first request), the runtime:
 3. Registers them as Copilot SDK tools with parameter schemas and descriptions
 4. Each tool invokes its connector action via the ARM `dynamicInvoke` API
 
-For example, a Teams connector generates ~30 tools including `teams_post_message_to_conversation`, `teams_reply_with_message_to_conversation`, `teams_create_channel`, `teams_list_members`, and more.
+### Tool Naming
+
+Tool names follow the pattern `{prefix}_{api_type}_{operation}`, truncated to 64 characters:
+
+- **Default:** The prefix is the connection's Azure resource name. If it matches the API type (e.g., a connection named `teams` for the Teams API), the prefix is collapsed to avoid redundancy: `teams_get_all_teams`
+- **Multiple connectors of the same type:** The resource name differentiates them: `sql_sales_sql_get_tables_v2`, `sql_hr_sql_get_tables_v2`
+- **Explicit prefix:** Use the optional `prefix` field to control the name:
+
+```yaml
+---
+tools_from_connections:
+  - connection_id: $SQL_SALES_CONNECTION_ID
+    prefix: sales_db
+  - connection_id: $SQL_HR_CONNECTION_ID
+    prefix: hr_db
+---
+```
+This generates tools like `sales_db_sql_get_tables_v2` and `hr_db_sql_get_tables_v2`.
 
 **Prerequisites:** Same RBAC and identity requirements as connector triggers (see above).
 

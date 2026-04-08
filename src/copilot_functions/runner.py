@@ -12,7 +12,6 @@ from .client_manager import CopilotClientManager, _is_byok_mode
 from .config import get_app_root, resolve_config_dir, session_exists
 from .connector_tool_cache import get_connector_tools
 from .mcp import get_cached_mcp_servers
-from .sandbox import get_sandbox_tools
 from .skills import resolve_session_directory_for_skills
 from .tools import _REGISTERED_TOOLS_CACHE
 
@@ -197,14 +196,14 @@ async def run_copilot_agent(
     model: str = DEFAULT_MODEL,
     session_id: Optional[str] = None,
     streaming: bool = False,
+    sandbox_tools: Optional[list] = None,
 ) -> AgentResult:
     config_dir = resolve_config_dir()
     client = await CopilotClientManager.get_client()
 
     # Discover connector tools (lazy-init, cached after first call)
     connector_tools = await get_connector_tools()
-    sandbox_tools = await get_sandbox_tools()
-    extra_tools = connector_tools + sandbox_tools
+    extra_tools = connector_tools + (sandbox_tools or [])
 
     # Resume existing session or create a new one
     if session_id and session_exists(config_dir, session_id):
@@ -286,6 +285,7 @@ async def run_copilot_agent_stream(
     timeout: float = DEFAULT_TIMEOUT,
     model: str = DEFAULT_MODEL,
     session_id: Optional[str] = None,
+    sandbox_tools: Optional[list] = None,
 ):
     """Async generator that yields SSE-formatted events as the agent streams a response.
 
@@ -354,8 +354,7 @@ async def run_copilot_agent_stream(
             queue.put_nowait({"type": "error", "content": error_msg})
 
     connector_tools = await get_connector_tools()
-    sandbox_tools = await get_sandbox_tools()
-    extra_tools = connector_tools + sandbox_tools
+    extra_tools = connector_tools + (sandbox_tools or [])
 
     if session_id and session_exists(config_dir, session_id):
         logging.info(f"[stream] Resuming existing session: {session_id}")

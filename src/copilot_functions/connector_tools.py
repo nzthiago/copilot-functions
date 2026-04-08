@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from urllib.parse import quote
 
@@ -51,13 +52,43 @@ def _build_invoke_path(op: ParsedOperation, args: dict, all_params: list[ParsedP
     return path
 
 
-def generate_tools(arm: ArmClient, connection: ConnectionInfo) -> list[Tool]:
-    """Generate Copilot SDK Tool objects for each operation in a connection."""
+def generate_tools(arm: ArmClient, connection: ConnectionInfo, prefix: str | None = None) -> list[Tool]:
+    """Generate Copilot SDK Tool objects for each operation in a connection.
+
+    Tool names are ``{effective_prefix}_{api_name}_{operation_id}`` where:
+    - ``prefix`` from frontmatter overrides the default
+    - Default prefix is the connection resource name (from ARM ID)
+    - If effective_prefix == api_name, collapse to ``{api_name}_{operation_id}``
+    - Truncated to 64 chars (prefix shrinks first to preserve operation clarity)
+    """
     tools = []
     api_name = connection.api_name
 
+    # Determine effective prefix
+    if prefix:
+        effective_prefix = _sanitize_name(_to_snake_case(prefix))
+    else:
+        effective_prefix = _sanitize_name(_to_snake_case(connection.name))
+
     for op in connection.operations:
-        tool_name = f"{api_name}_{_to_snake_case(op.operation_id)}"
+        snake_op = _to_snake_case(op.operation_id)
+
+        # Build tool name: collapse prefix when it matches api_name
+        if effective_prefix == api_name:
+            tool_name = f"{api_name}_{snake_op}"
+        else:
+            tool_name = f"{effective_prefix}_{api_name}_{snake_op}"
+
+        # Smart truncation: shrink prefix first to preserve operation name
+        if len(tool_name) > 64:
+            suffix = f"_{api_name}_{snake_op}" if effective_prefix != api_name else f"_{snake_op}"
+            prefix_budget = 64 - len(suffix)
+            if prefix_budget > 0:
+                tool_name = f"{effective_prefix[:prefix_budget]}{suffix}"
+            else:
+                tool_name = tool_name[:64]
+            logging.warning(f"Tool name truncated to 64 chars: '{tool_name}'")
+
         tool_name = tool_name[:64]
 
         # Build JSON schema for parameters
