@@ -1,35 +1,35 @@
-# Markdown-Based Agents on Azure Functions (Experimental)
+# Markdown Agents for Azure Functions (Experimental)
 
-> **⚠️ This is an experimental feature.** The agent runtime, deployment model, and APIs described here are under active development and subject to change.
+> **⚠️ This is an experimental feature.** The agent runtime, programming model, and APIs described here are under active development and subject to change.
 
-Today, you can build custom agents with GitHub Copilot. You define your agent's personality and behavior in a markdown file (`.agent.md`), add skills as knowledge files, and configure MCP servers for live data and actions. All of that just works in VS Code or Copilot CLI — locally, on your machine.
-
-This repo demonstrates an experimental new runtime that lets you deploy the same markdown-based agent project to Azure Functions with zero code changes. The agent runs in the cloud, behind an HTTP API, and can be called from anywhere.
+Build AI agents on Azure Functions using markdown. Define your agent's behavior in a `.agent.md` file, add skills as knowledge modules, connect to external services via triggers and connectors, and give your agent custom tools in plain Python. The runtime handles the rest — LLM orchestration, tool invocation, session management, and scaling.
 
 **Key features**
 
-- Deploy markdown-based agents as an Azure Functions app
-- Choose from GitHub models or Microsoft Foundry models to power your agent
-- Built-in HTTP APIs for chatting with your agent (`POST /agent/chat`, `POST /agent/chatstream`)
-- Built-in MCP server endpoint for remote MCP clients (`/runtime/webhooks/mcp`)
-- Built-in single-page chat UI
-- Automatic session persistence with Azure Files
-- Run prompts on a schedule using timer triggers
-- Trigger agents from external events like Teams channel messages using Azure connector triggers
-- Dynamically generate tools from Azure API Connections (connectors)
-- Give your agent custom tools written in plain Python
+- **Markdown-first programming model** — agent instructions, trigger configuration, and tool/connector bindings defined in `.agent.md` files
+- **Multi-agent support** — a main agent for HTTP/MCP access, plus any number of event-triggered agents (timer, queue, Teams, blob, etc.)
+- **Built-in HTTP APIs** for chatting with your agent (`POST /agent/chat`, `POST /agent/chatstream`)
+- **Built-in MCP server** endpoint for remote MCP clients (`/runtime/webhooks/mcp`)
+- **Built-in chat UI** at the app root
+- **Skills** — reusable prompt modules loaded from `SKILL.md` files
+- **Custom Python tools** — drop a `.py` file in `tools/` and it becomes a tool the agent can call
+- **Azure connector tools** — dynamically generate tools from Azure API Connections (Teams, Office 365, SQL, Salesforce, etc.)
+- **Execution sandbox** — give your agent a sandboxed Python environment for computation and web browsing
+- **Event-driven triggers** — map any Azure Functions trigger (timer, queue, blob, Event Hub, Service Bus, Cosmos DB) or connector trigger (Teams, Office 365, SharePoint) to an agent
+- **Session persistence** with Azure Files for multi-turn conversations
+- **Model choice** — GitHub models (Copilot API) or Microsoft Foundry models (your own Azure deployment)
 
-**Hosting your agent in Azure Functions**
+**How it works**
 
-Azure Functions is a serverless compute platform that already supports runtimes like JavaScript, Python, and .NET. An agent project with `.agent.md` files, skills, and MCP servers is just another workload. This experiment adds a new runtime to Azure Functions that natively understands and runs markdown-based agent projects.
+Azure Functions is a serverless compute platform that supports runtimes like JavaScript, Python, and .NET. This experiment adds an agent programming model on top of the Python runtime: you write markdown and YAML, the runtime turns it into a fully-hosted agent with HTTP endpoints, event triggers, and tool orchestration powered by the [GitHub Copilot SDK](https://github.com/github/copilot-sdk).
 
-Development workflow:
-
-1. Define and test your agent in VS Code as a standard Copilot project
-2. Deploy the same project to Azure Functions with `azd up`
-3. Your agent is now a cloud-hosted HTTP API — no rewrites needed
-
-This repo includes a sample **Teams chat agent** that responds to messages in a Microsoft Teams channel and can create articles on demand.
+```
+main.agent.md          →  HTTP chat API + MCP server + chat UI
+daily_report.agent.md  →  Timer-triggered agent (runs on schedule)
+email_handler.agent.md →  Connector-triggered agent (reacts to new emails)
+tools/*.py             →  Custom tools the agents can call
+skills/*/SKILL.md      →  Reusable knowledge modules
+```
 
 ## Project Structure
 
@@ -62,7 +62,7 @@ src/                           # Self-contained Azure Functions app
         └── index.html         # Built-in chat UI
 ```
 
-The `src` folder is a complete Azure Functions Python app. `function_app.py` is a thin wrapper that calls `create_function_app()` from the `copilot_functions` library.
+The `src` folder is a complete Azure Functions Python app. `function_app.py` is a thin entry point — the `copilot_functions` library handles agent loading, tool discovery, trigger registration, and LLM orchestration.
 
 ### Multi-agent architecture
 
@@ -73,20 +73,24 @@ Agents are defined as markdown files in the `src` folder:
 
 All agents share the same `tools/`, `skills/`, and `copilot_functions/` library. Each agent can independently configure `tools_from_connections` and `execution_sandbox`.
 
-## Running Locally in VS Code
+## Running Locally
 
-1. Open the `src` folder in VS Code
-2. Enable the experimental setting: `chat.useAgentSkills`
-3. Enable built-in tools in Copilot Chat
-4. Start chatting with your agent in Copilot Chat
+The agent can be run locally using Azure Functions Core Tools:
 
-Your agent's instructions from `main.agent.md`, skills from `skills/`, and MCP servers from `.vscode/mcp.json` are all automatically loaded.
+```bash
+cd src
+func start
+```
+
+This starts the Azure Functions host, registers all agents and triggers, and serves the chat UI at `http://localhost:7071/`.
+
+Note: Connector triggers and connector tools require Azure API Connections and managed identity, so they only work when deployed to Azure. Timer triggers and the HTTP chat endpoints work locally.
 
 ## Deploying to Azure Functions
 
 ### Prerequisites: Create a GitHub Personal Access Token
 
-The Azure Functions deployment requires a GitHub token with Copilot permissions. GitHub Copilot SDK (which is used by Functions to run your agent) currently requires authentication to persist and resume sessions (even though sessions are stored locally). If you choose a GitHub model to power your agent (see [Model Selection](#model-selection)), the token is also used to access the model.
+The runtime uses the [GitHub Copilot SDK](https://github.com/github/copilot-sdk) for LLM orchestration, which requires a GitHub token for authentication and session persistence. If you choose a GitHub model (see [Model Selection](#model-selection)), the token is also used for model access.
 
 1. Go to https://github.com/settings/personal-access-tokens/new
 2. Under **Permissions**, click **+ Add permissions**
@@ -660,15 +664,14 @@ curl -s -X POST "$BASE_URL/agent/chat?code=$FUNCTION_KEY" \
 
 ## Known Limitations
 
-- **Python tools in `src/tools/` do not work locally** since they're not natively supported by Copilot. They are fully functional after deploying with `azd up`.
+- **Connector triggers and tools require Azure deployment** — they depend on Azure API Connections and managed identity.
 - **Use `azd up`, not `azd provision` + `azd deploy` separately.** The pre-package hook scripts don't run in the correct sequence when provision and deploy are executed independently.
 - **Windows is not supported.** The packaging hooks are shell scripts (`.sh`) and require macOS, Linux, or WSL.
 
 ## Try It
 
 1. Clone this repo
-2. Open `src` in VS Code and chat with the agent locally (MCP and skills work; Python tools require cloud deployment)
-3. Explore the `src` folder to see the agent definition
-4. Run `azd up` to deploy to Azure Functions
-5. Open your cloud-hosted chat UI at `/`
-6. Optionally call `/agent/chat` (JSON) or `/agent/chatstream` (SSE) directly (see `test/test.cloud.http` for examples)
+2. Explore `src/main.agent.md` and the other `.agent.md` files to see how agents are defined
+3. Run `func start` in `src/` to test locally, or `azd up` to deploy to Azure
+4. Open the chat UI at the app root URL
+5. Call `/agent/chat` (JSON) or `/agent/chatstream` (SSE) directly (see `test/test.cloud.http` for examples)
