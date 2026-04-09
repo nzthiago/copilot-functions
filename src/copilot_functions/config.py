@@ -88,6 +88,28 @@ def session_exists(config_dir: Optional[str], session_id: str) -> bool:
     return exists
 
 
+def clear_session_locks(config_dir: Optional[str], session_id: str) -> None:
+    """Remove any ``inuse.*.lock`` files from a session directory.
+
+    The Copilot CLI creates ``inuse.{PID}.lock`` when a process claims a
+    session.  On multi-instance deployments (e.g. Azure Functions Flex
+    Consumption) a different instance may see a stale lock from another
+    process and refuse to resume the session.  Clearing the lock before
+    resume allows the new process to take ownership.
+    """
+    base = config_dir if config_dir else _DEFAULT_CONFIG_DIR
+    session_path = os.path.join(base, "session-state", session_id)
+    if not os.path.isdir(session_path):
+        return
+    import glob as _glob
+    for lock_file in _glob.glob(os.path.join(session_path, "inuse.*.lock")):
+        try:
+            os.remove(lock_file)
+            logging.info(f"Removed session lock file: {lock_file}")
+        except OSError as e:
+            logging.warning(f"Failed to remove lock file {lock_file}: {e}")
+
+
 # ---------------------------------------------------------------------------
 # Environment variable substitution for agent frontmatter values
 # ---------------------------------------------------------------------------

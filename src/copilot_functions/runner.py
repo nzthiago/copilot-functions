@@ -10,7 +10,7 @@ from copilot import CopilotClient, SubprocessConfig
 import frontmatter
 
 from .client_manager import CopilotClientManager, _is_byok_mode
-from .config import get_app_root, resolve_config_dir, session_exists, substitute_env_vars_in_text, _to_bool
+from .config import get_app_root, resolve_config_dir, session_exists, clear_session_locks, substitute_env_vars_in_text, _to_bool
 from .connector_tool_cache import get_connector_tools
 from .mcp import get_cached_mcp_servers
 from .skills import resolve_session_directory_for_skills
@@ -232,11 +232,13 @@ async def run_copilot_agent(
     temp_client = None
     if session_id and session_exists(config_dir, session_id):
         logging.info(f"Resuming existing session: {session_id}")
+        clear_session_locks(config_dir, session_id)
         resume_kwargs = _build_resume_kwargs(model=model, config_dir=config_dir, extra_tools=extra_tools)
         try:
             session = await client.resume_session(session_id, **resume_kwargs)
         except Exception as e:
             logging.warning(f"Failed to resume session on singleton client: {e}. Retrying with temp client.")
+            clear_session_locks(config_dir, session_id)
             temp_client = await _create_temp_client()
             session = await temp_client.resume_session(session_id, **resume_kwargs)
     else:
@@ -395,11 +397,13 @@ async def run_copilot_agent_stream(
     temp_client = None
     if session_id and session_exists(config_dir, session_id):
         logging.info(f"[stream] Resuming existing session: {session_id}")
+        clear_session_locks(config_dir, session_id)
         resume_kwargs = _build_resume_kwargs(model=model, config_dir=config_dir, streaming=True, extra_tools=extra_tools)
         try:
             session = await client.resume_session(session_id, **resume_kwargs, on_event=on_event)
         except Exception as e:
             logging.warning(f"[stream] Failed to resume session on singleton client: {e}. Retrying with temp client.")
+            clear_session_locks(config_dir, session_id)
             temp_client = await _create_temp_client()
             session = await temp_client.resume_session(session_id, **resume_kwargs, on_event=on_event)
     else:
