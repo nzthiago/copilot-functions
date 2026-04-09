@@ -156,6 +156,7 @@ trigger:
   schedule: "0 0 9 * * *"  # trigger-specific params passed as kwargs
 
 logger: true               # optional, default true
+substitute_variables: true # optional, default true — inline $VAR / %VAR% replacement in body
 ---
 
 Agent instructions in markdown...
@@ -189,7 +190,42 @@ This applies to all trigger types, including timers (whose data includes fields 
 
 ### Environment variable substitution
 
+#### Frontmatter values
+
 String values in `trigger.*` (except `type`), `tools_from_connections[].connection_id`, and `execution_sandbox.session_pool_management_endpoint` support `$VAR` or `%VAR%` syntax (full-string match only).
+
+#### Agent instructions (markdown body)
+
+Variable references in the agent's markdown body are replaced **inline** with environment variable values at load time. Both `$VAR_NAME` and `%VAR_NAME%` syntaxes are supported:
+
+```markdown
+---
+name: Notifier
+---
+
+Send a daily summary email to $TO_EMAIL.
+Post a message to the %TEAM_NAME% team's General channel.
+```
+
+If `TO_EMAIL=alice@example.com` and `TEAM_NAME=Engineering` are set in the environment, the agent instructions become:
+
+> Send a daily summary email to alice@example.com.
+> Post a message to the Engineering team's General channel.
+
+If a referenced variable is not set, the original `$VAR_NAME` or `%VAR_NAME%` text is left unchanged.
+
+Text inside fenced code blocks (`` ``` ``) is **not** substituted, so documentation examples in your instructions are preserved.
+
+To disable substitution for an agent, set `substitute_variables: false` in the frontmatter:
+
+```yaml
+---
+name: My Agent
+substitute_variables: false
+---
+
+Instructions with literal $VAR references that should not be replaced.
+```
 
 ## What `main.agent.md` Enables
 

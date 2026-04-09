@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional
 import azure.functions as func
 import frontmatter
 
-from .config import get_app_root, set_app_root, resolve_env_var
+from .config import get_app_root, set_app_root, resolve_env_var, substitute_env_vars_in_text, _to_bool
 from .connector_tool_cache import configure_connector_tools
 from .runner import run_copilot_agent, run_copilot_agent_stream
 from .sandbox import create_sandbox_tools
@@ -55,6 +55,11 @@ def _load_agent_file(path: Path) -> Optional[Dict[str, Any]]:
         parsed = frontmatter.loads(raw)
         metadata = parsed.metadata if isinstance(parsed.metadata, dict) else {}
         content = (parsed.content or "").strip()
+
+        # Apply inline env-var substitution unless explicitly disabled
+        if _to_bool(metadata.get("substitute_variables"), default=True):
+            content = substitute_env_vars_in_text(content)
+
         return {"metadata": metadata, "content": content}
     except Exception as exc:
         logging.warning(f"Failed to parse {path.name}: {exc}")
@@ -95,16 +100,7 @@ def _normalize_timer_schedule(schedule: str) -> str:
     return schedule.strip()
 
 
-def _to_bool(value: Any, default: bool = True) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        lowered = value.strip().lower()
-        if lowered in {"true", "1", "yes", "y"}:
-            return True
-        if lowered in {"false", "0", "no", "n"}:
-            return False
-    return default
+# _to_bool imported from .config
 
 
 def _resolve_trigger_params(trigger_params: Dict[str, Any]) -> Dict[str, Any]:

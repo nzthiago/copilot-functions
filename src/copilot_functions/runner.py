@@ -9,7 +9,7 @@ from copilot.session import ProviderConfig, PermissionHandler
 import frontmatter
 
 from .client_manager import CopilotClientManager, _is_byok_mode
-from .config import get_app_root, resolve_config_dir, session_exists
+from .config import get_app_root, resolve_config_dir, session_exists, substitute_env_vars_in_text, _to_bool
 from .connector_tool_cache import get_connector_tools
 from .mcp import get_cached_mcp_servers
 from .skills import resolve_session_directory_for_skills
@@ -43,7 +43,12 @@ def _load_agents_md_content() -> str:
 
         parsed = frontmatter.loads(raw_content)
         content = (parsed.content or "").strip()
-        metadata_count = len(parsed.metadata) if parsed.metadata else 0
+        metadata = parsed.metadata if isinstance(parsed.metadata, dict) else {}
+        metadata_count = len(metadata)
+
+        # Apply inline env-var substitution unless explicitly disabled
+        if _to_bool(metadata.get("substitute_variables"), default=True):
+            content = substitute_env_vars_in_text(content)
 
         logging.info(
             f"Loaded main.agent.md ({len(raw_content)} chars, frontmatter keys={metadata_count}, body chars={len(content)})"
