@@ -14,8 +14,8 @@
     "copilotModel": {
       "value": "${COPILOT_MODEL}"
     },
-    "acaSessionPoolResourceId": {
-      "value": "${ACA_SESSION_POOL_RESOURCE_ID}"
+    "principalId": {
+      "value": "${AZURE_PRINCIPAL_ID}"
     }
   }
 }

@@ -22,8 +22,8 @@ param githubToken string
 @description('GitHub Copilot model to use (e.g. claude-sonnet-4.6, claude-opus-4.6).')
 param copilotModel string = 'claude-sonnet-4.6'
 
-@description('ARM resource ID of an ACA dynamic sessions pool for the execution sandbox.')
-param acaSessionPoolResourceId string
+@description('Id of the user or service principal to grant session pool executor access. Leave empty to skip.')
+param principalId string = ''
 
 var abbrs = loadJsonContent('./abbreviations.json')
 var resourceToken = toLower(uniqueString(subscription().id, environmentName, location))
@@ -31,21 +31,6 @@ var tags = { 'azd-env-name': environmentName }
 var functionAppName = '${abbrs.webSitesFunctions}copilot-func-${resourceToken}'
 var deploymentStorageContainerName = 'app-package-${take(functionAppName, 32)}-${take(toLower(uniqueString(functionAppName, resourceToken)), 7)}'
 var sessionShareName = 'code-assistant-session'
-
-// Parse the ACA session pool resource ID to extract subscription, resource group, and pool name
-var sessionPoolIdParts = split(acaSessionPoolResourceId, '/')
-var sessionPoolSubscriptionId = sessionPoolIdParts[2]
-var sessionPoolResourceGroup = sessionPoolIdParts[4]
-var sessionPoolName = sessionPoolIdParts[8]
-
-// Reference the session pool to get its management endpoint
-module sessionPoolRef './app/session-pool-ref.bicep' = {
-  name: 'sessionPoolRef'
-  scope: resourceGroup(sessionPoolSubscriptionId, sessionPoolResourceGroup)
-  params: {
-    sessionPoolName: sessionPoolName
-  }
-}
 
 // Resource Group
 resource rg 'Microsoft.Resources/resourceGroups@2021-04-01' = {
@@ -102,7 +87,7 @@ module api './app/api.bicep' = {
       GITHUB_TOKEN: githubToken
       COPILOT_MODEL: copilotModel
       AZURE_CLIENT_ID: apiUserAssignedIdentity.outputs.clientId
-      ACA_SESSION_POOL_ENDPOINT: sessionPoolRef.outputs.poolManagementEndpoint
+      ACA_SESSION_POOL_ENDPOINT: sessionPool.outputs.poolManagementEndpoint
       ENABLE_MULTIPLATFORM_BUILD: 'true'
       PYTHON_ENABLE_INIT_INDEXING: '1'
     }
@@ -135,7 +120,7 @@ module storage 'br/public:avm/res/storage/storage-account:0.8.3' = {
   }
 }
 
-// RBAC — storage, app insights, and ACA session pool
+// RBAC — storage, app insights
 module rbac './app/rbac.bicep' = {
   name: 'rbacAssignments'
   scope: rg
@@ -146,13 +131,26 @@ module rbac './app/rbac.bicep' = {
   }
 }
 
-// ACA Session Pool RBAC (cross-resource-group)
+// ACA Session Pool
+module sessionPool './app/session-pool.bicep' = {
+  name: 'sessionPool'
+  scope: rg
+  params: {
+    sessionPoolName: 'sessionpool${resourceToken}'
+    location: location
+    tags: tags
+  }
+}
+
+// ACA Session Pool RBAC
 module sessionPoolRbac './app/session-pool-rbac.bicep' = {
   name: 'sessionPoolRbac'
-  scope: resourceGroup(sessionPoolSubscriptionId, sessionPoolResourceGroup)
+  scope: rg
+  dependsOn: [sessionPool]
   params: {
-    sessionPoolName: sessionPoolName
+    sessionPoolName: 'sessionpool${resourceToken}'
     managedIdentityPrincipalId: apiUserAssignedIdentity.outputs.principalId
+    userPrincipalId: principalId
   }
 }
 
