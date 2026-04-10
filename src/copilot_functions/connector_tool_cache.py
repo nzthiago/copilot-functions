@@ -4,9 +4,9 @@ import asyncio
 import logging
 from typing import Any, Dict, List
 
-from .arm import ArmClient
+from .arm import ArmClient, DataPlaneClient
 from .config import resolve_env_var
-from .connectors import load_connection
+from .connectors import load_connection, is_v2_connection
 from .connector_tools import generate_tools
 
 
@@ -16,6 +16,7 @@ class _ConnectorToolCache:
     def __init__(self):
         self._tools: list | None = None
         self._arm: ArmClient | None = None
+        self._data_plane: DataPlaneClient | None = None
         self._lock = asyncio.Lock()
         self._connection_specs: List[Dict[str, Any]] = []
 
@@ -54,6 +55,14 @@ class _ConnectorToolCache:
             self._arm = ArmClient()
             all_tools = []
 
+            # Check if any V2 connections need a data plane client
+            has_v2 = any(
+                is_v2_connection(resolve_env_var(str(s.get("connection_id", ""))))
+                for s in self._connection_specs
+            )
+            if has_v2:
+                self._data_plane = DataPlaneClient()
+
             for spec in self._connection_specs:
                 raw_connection_id = spec.get("connection_id", "")
                 if not raw_connection_id:
@@ -66,7 +75,11 @@ class _ConnectorToolCache:
                     continue
 
                 try:
-                    connection = await load_connection(self._arm, connection_id)
+                    v2 = is_v2_connection(connection_id)
+                    connection = await load_connection(
+                        self._arm, connection_id,
+                        data_plane_client=self._data_plane if v2 else None,
+                    )
 
                     # Determine tool name prefix: explicit > connection name > api_name
                     prefix = spec.get("prefix")
@@ -75,10 +88,14 @@ class _ConnectorToolCache:
                     else:
                         prefix = None  # generate_tools will use connection.name
 
-                    tools = generate_tools(self._arm, connection, prefix=prefix)
+                    tools = generate_tools(
+                        self._arm, connection, prefix=prefix,
+                        data_plane_client=self._data_plane if v2 else None,
+                    )
                     all_tools.extend(tools)
+                    version_label = "V2" if v2 else "V1"
                     logging.info(
-                        f"Connector tools discovered: {connection.display_name} ({connection.api_name}): "
+                        f"Connector tools discovered ({version_label}): {connection.display_name} ({connection.api_name}): "
                         f"{len(tools)} tools [{connection.status}]"
                     )
                     for tool in tools:

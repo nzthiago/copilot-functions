@@ -7,7 +7,7 @@ from urllib.parse import quote
 
 from copilot.tools import Tool, ToolInvocation, ToolResult
 
-from .arm import ArmClient
+from .arm import ArmClient, DataPlaneClient
 from .connectors import ConnectionInfo, ParsedOperation, ParsedParameter
 
 
@@ -52,7 +52,11 @@ def _build_invoke_path(op: ParsedOperation, args: dict, all_params: list[ParsedP
     return path
 
 
-def generate_tools(arm: ArmClient, connection: ConnectionInfo, prefix: str | None = None) -> list[Tool]:
+def generate_tools(
+    arm: ArmClient, connection: ConnectionInfo,
+    prefix: str | None = None,
+    data_plane_client: DataPlaneClient | None = None,
+) -> list[Tool]:
     """Generate Copilot SDK Tool objects for each operation in a connection.
 
     Tool names are ``{effective_prefix}_{api_name}_{operation_id}`` where:
@@ -153,39 +157,54 @@ def generate_tools(arm: ArmClient, connection: ConnectionInfo, prefix: str | Non
                         else:
                             body[param.name] = value
 
-                request_body: dict = {
-                    "request": {
-                        "method": op.method,
-                        "path": invoke_path,
-                    }
-                }
-                if queries:
-                    request_body["request"]["queries"] = queries
-                if body:
-                    request_body["request"]["body"] = body
-
                 try:
-                    result = await arm.post(
-                        f"{connection.resource_id}/dynamicInvoke",
-                        body=request_body,
-                    )
-                    response = result.get("response", {})
-                    response_body = response.get("body", result)
-                    try:
-                        status_code = int(response.get("statusCode", 200))
-                    except (ValueError, TypeError):
-                        status_code = 200
-
-                    if status_code >= 400:
-                        return ToolResult(
-                            text_result_for_llm=f"Error ({status_code}): {json.dumps(response_body)}",
-                            result_type="error",
+                    if data_plane_client and connection.connection_runtime_url:
+                        # V2: direct HTTP to data plane
+                        url = f"{connection.connection_runtime_url.rstrip('/')}{invoke_path}"
+                        result = await data_plane_client.request(
+                            op.method,
+                            url,
+                            params=queries or None,
+                            body=body or None,
                         )
+                        return ToolResult(
+                            text_result_for_llm=json.dumps(result, indent=2, default=str),
+                            result_type="success",
+                        )
+                    else:
+                        # V1: dynamicInvoke via ARM
+                        request_body: dict = {
+                            "request": {
+                                "method": op.method,
+                                "path": invoke_path,
+                            }
+                        }
+                        if queries:
+                            request_body["request"]["queries"] = queries
+                        if body:
+                            request_body["request"]["body"] = body
 
-                    return ToolResult(
-                        text_result_for_llm=json.dumps(response_body, indent=2, default=str),
-                        result_type="success",
-                    )
+                        result = await arm.post(
+                            f"{connection.resource_id}/dynamicInvoke",
+                            body=request_body,
+                        )
+                        response = result.get("response", {})
+                        response_body = response.get("body", result)
+                        try:
+                            status_code = int(response.get("statusCode", 200))
+                        except (ValueError, TypeError):
+                            status_code = 200
+
+                        if status_code >= 400:
+                            return ToolResult(
+                                text_result_for_llm=f"Error ({status_code}): {json.dumps(response_body)}",
+                                result_type="error",
+                            )
+
+                        return ToolResult(
+                            text_result_for_llm=json.dumps(response_body, indent=2, default=str),
+                            result_type="success",
+                        )
                 except Exception as e:
                     error_type = type(e).__name__
                     return ToolResult(

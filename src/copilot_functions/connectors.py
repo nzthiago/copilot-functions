@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from .arm import ArmClient
+from .arm import ArmClient, DataPlaneClient
 
 
 @dataclass
@@ -39,6 +39,12 @@ class ConnectionInfo:
     status: str
     location: str
     operations: list[ParsedOperation] = field(default_factory=list)
+    connection_runtime_url: str | None = None
+
+
+def is_v2_connection(connection_id: str) -> bool:
+    """Return True if the connection ID is a V2 (AI Gateway) connection."""
+    return "/aigateways/" in connection_id.lower()
 
 
 def _resolve_ref(ref: str, root: dict) -> dict:
@@ -120,7 +126,8 @@ def _extract_body_properties(
 
 
 async def _resolve_dynamic_schema(
-    arm: ArmClient, resource_id: str, swagger: dict, dynamic_schema: dict, op: dict
+    arm: ArmClient, resource_id: str, swagger: dict, dynamic_schema: dict, op: dict,
+    *, data_plane_client: DataPlaneClient | None = None, connection_runtime_url: str | None = None,
 ) -> dict | None:
     """Resolve an x-ms-dynamic-schema by calling the referenced operation."""
     op_id = dynamic_schema.get("operationId")
@@ -155,19 +162,30 @@ async def _resolve_dynamic_schema(
         invoke_path = invoke_path.replace(f"{{{param_name}}}", str(param_val))
 
     try:
-        result = await arm.post(
-            f"{resource_id}/dynamicInvoke",
-            body={"request": {"method": schema_method.upper(), "path": invoke_path}}
-        )
-        response = result.get("response", {})
-        body = response.get("body", {})
-        value_path = dynamic_schema.get("value-path", "schema")
-        return body.get(value_path, body)
+        if data_plane_client and connection_runtime_url:
+            # V2: direct HTTP to data plane
+            url = f"{connection_runtime_url.rstrip('/')}{invoke_path}"
+            result = await data_plane_client.request(schema_method.upper(), url)
+            value_path = dynamic_schema.get("value-path", "schema")
+            return result.get(value_path, result)
+        else:
+            # V1: dynamicInvoke via ARM
+            result = await arm.post(
+                f"{resource_id}/dynamicInvoke",
+                body={"request": {"method": schema_method.upper(), "path": invoke_path}}
+            )
+            response = result.get("response", {})
+            body = response.get("body", {})
+            value_path = dynamic_schema.get("value-path", "schema")
+            return body.get(value_path, body)
     except Exception:
         return None
 
 
-async def _parse_operations(swagger: dict, arm: ArmClient, resource_id: str) -> list[ParsedOperation]:
+async def _parse_operations(
+    swagger: dict, arm: ArmClient, resource_id: str,
+    *, data_plane_client: DataPlaneClient | None = None, connection_runtime_url: str | None = None,
+) -> list[ParsedOperation]:
     """Parse Swagger paths into a list of ParsedOperations."""
     paths = swagger.get("paths", {})
     operations: list[ParsedOperation] = []
@@ -216,7 +234,11 @@ async def _parse_operations(swagger: dict, arm: ArmClient, resource_id: str) -> 
                     resolved_schema = _resolve_schema(schema, swagger)
                     dynamic = resolved_schema.get("x-ms-dynamic-schema")
                     if dynamic and not resolved_schema.get("properties"):
-                        dyn_schema = await _resolve_dynamic_schema(arm, resource_id, swagger, dynamic, op)
+                        dyn_schema = await _resolve_dynamic_schema(
+                            arm, resource_id, swagger, dynamic, op,
+                            data_plane_client=data_plane_client,
+                            connection_runtime_url=connection_runtime_url,
+                        )
                         if dyn_schema:
                             body_props, body_required = _extract_body_properties(
                                 {"properties": dyn_schema.get("properties", {}), "required": dyn_schema.get("required", [])},
@@ -278,7 +300,7 @@ async def _parse_operations(swagger: dict, arm: ArmClient, resource_id: str) -> 
 
 
 def _parse_resource_id(resource_id: str) -> dict:
-    """Extract subscription, resource group, and name from a connection resource ID."""
+    """Extract subscription, resource group, and name from a V1 connection resource ID."""
     pattern = (
         r"/subscriptions/(?P<subscription>[^/]+)"
         r"/resourceGroups/(?P<resource_group>[^/]+)"
@@ -286,12 +308,42 @@ def _parse_resource_id(resource_id: str) -> dict:
     )
     match = re.search(pattern, resource_id, re.IGNORECASE)
     if not match:
-        raise ValueError(f"Invalid connection resource ID: {resource_id}")
+        raise ValueError(f"Invalid V1 connection resource ID: {resource_id}")
     return match.groupdict()
 
 
-async def load_connection(arm: ArmClient, resource_id: str) -> ConnectionInfo:
-    """Fetch connection metadata and its Swagger spec, return a ConnectionInfo with parsed operations."""
+def _parse_v2_resource_id(resource_id: str) -> dict:
+    """Extract subscription, resource group, gateway, and name from a V2 connection resource ID."""
+    pattern = (
+        r"/subscriptions/(?P<subscription>[^/]+)"
+        r"/resourceGroups/(?P<resource_group>[^/]+)"
+        r"/providers/Microsoft\.Web/aigateways/(?P<gateway>[^/]+)"
+        r"/connections/(?P<name>[^/]+)"
+    )
+    match = re.search(pattern, resource_id, re.IGNORECASE)
+    if not match:
+        raise ValueError(f"Invalid V2 connection resource ID: {resource_id}")
+    return match.groupdict()
+
+
+_V2_API_VERSION = "2026-03-01-preview"
+
+
+async def load_connection(
+    arm: ArmClient, resource_id: str,
+    *, data_plane_client: DataPlaneClient | None = None,
+) -> ConnectionInfo:
+    """Fetch connection metadata and Swagger spec, return a ConnectionInfo with parsed operations.
+
+    Automatically detects V1 vs V2 connections based on the resource ID format.
+    """
+    if is_v2_connection(resource_id):
+        return await _load_v2_connection(arm, resource_id, data_plane_client=data_plane_client)
+    return await _load_v1_connection(arm, resource_id)
+
+
+async def _load_v1_connection(arm: ArmClient, resource_id: str) -> ConnectionInfo:
+    """Load a V1 connection (Microsoft.Web/connections)."""
     conn_data = await arm.get(resource_id)
     props = conn_data.get("properties", {})
     api_name = props.get("api", {}).get("name", "")
@@ -321,4 +373,57 @@ async def load_connection(arm: ArmClient, resource_id: str) -> ConnectionInfo:
         status=status,
         location=location,
         operations=operations,
+    )
+
+
+async def _load_v2_connection(
+    arm: ArmClient, resource_id: str,
+    *, data_plane_client: DataPlaneClient | None = None,
+) -> ConnectionInfo:
+    """Load a V2 connection (Microsoft.Web/aigateways/connections)."""
+    parts = _parse_v2_resource_id(resource_id)
+
+    # Get connection metadata
+    conn_data = await arm.get(resource_id, api_version=_V2_API_VERSION)
+    props = conn_data.get("properties", {})
+    api_name = props.get("connectorName", "")
+    display_name = props.get("displayName", "")
+    status = props.get("overallStatus", "Unknown")
+    connection_runtime_url = props.get("connectionRuntimeUrl", "")
+
+    # Get location from the parent gateway
+    gateway_path = (
+        f"/subscriptions/{parts['subscription']}"
+        f"/resourceGroups/{parts['resource_group']}"
+        f"/providers/Microsoft.Web/aigateways/{parts['gateway']}"
+    )
+    gateway_data = await arm.get(gateway_path, api_version=_V2_API_VERSION)
+    location = gateway_data.get("location", "")
+
+    # Swagger uses the same managed API endpoint as V1
+    swagger_path = (
+        f"/subscriptions/{parts['subscription']}"
+        f"/providers/Microsoft.Web/locations/{location}"
+        f"/managedApis/{api_name}"
+    )
+    api_data = await arm.get(swagger_path, params={"export": "true"})
+    swagger = api_data.get("properties", {}).get("swagger", {})
+    if not swagger.get("paths"):
+        swagger = api_data
+
+    operations = await _parse_operations(
+        swagger, arm, resource_id,
+        data_plane_client=data_plane_client,
+        connection_runtime_url=connection_runtime_url,
+    )
+
+    return ConnectionInfo(
+        resource_id=resource_id,
+        name=parts["name"],
+        api_name=api_name,
+        display_name=display_name,
+        status=status,
+        location=location,
+        operations=operations,
+        connection_runtime_url=connection_runtime_url,
     )
