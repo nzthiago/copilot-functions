@@ -314,7 +314,7 @@ If there's no `main.agent.md`, the HTTP chat, MCP, and UI endpoints are all disa
 
 ## MCP Server Configuration
 
-You can give your agent access to external MCP servers by creating an `mcp.json` file (or `.vscode/mcp.json`) in the app root. Only **HTTP remote servers** are supported.
+You can give your agent access to external MCP servers by creating an `mcp.json` file in the app root. Only **HTTP remote servers** are supported.
 
 ```json
 {
