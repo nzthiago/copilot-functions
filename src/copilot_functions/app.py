@@ -423,17 +423,17 @@ def _make_http_agent_handler(
     response_schema: Optional[dict] = None,
 ):
     """Create an async handler for an HTTP-triggered agent that returns structured JSON."""
-    async def _handler(req: func.HttpRequest) -> func.HttpResponse:
-        logging.info(f"HTTP agent '{function_name}' triggered: {req.method} {req.url}")
+    async def _handler(req: Request) -> Response:
+        logging.info(f"HTTP agent '{function_name}' triggered")
 
         try:
             # Parse request body
             try:
-                body = req.get_json()
+                body = await req.json()
                 body_json = json.dumps(body, ensure_ascii=False, default=str)
-            except ValueError:
-                body_text = req.get_body().decode("utf-8", errors="replace")
-                body_json = body_text if body_text else "{}"
+            except Exception:
+                body_bytes = await req.body()
+                body_json = body_bytes.decode("utf-8", errors="replace") if body_bytes else "{}"
 
             # Build prompt
             parts = []
@@ -473,32 +473,32 @@ def _make_http_agent_handler(
                 extracted = _extract_json_from_response(result.content)
                 try:
                     parsed = json.loads(extracted)
-                    return func.HttpResponse(
-                        body=json.dumps(parsed, ensure_ascii=False),
+                    return Response(
+                        content=json.dumps(parsed, ensure_ascii=False),
                         status_code=200,
-                        mimetype="application/json",
+                        media_type="application/json",
                     )
                 except json.JSONDecodeError as je:
                     logging.warning(f"HTTP agent '{function_name}' returned invalid JSON: {je}")
-                    return func.HttpResponse(
-                        body=json.dumps({"error": "Agent returned invalid JSON", "raw_response": result.content}),
+                    return Response(
+                        content=json.dumps({"error": "Agent returned invalid JSON", "raw_response": result.content}),
                         status_code=500,
-                        mimetype="application/json",
+                        media_type="application/json",
                     )
             else:
                 # No schema — return raw text
-                return func.HttpResponse(
-                    body=result.content,
+                return Response(
+                    content=result.content,
                     status_code=200,
-                    mimetype="text/plain",
+                    media_type="text/plain",
                 )
 
         except Exception as exc:
             logging.exception(f"HTTP agent '{function_name}' failed: {exc}")
-            return func.HttpResponse(
-                body=json.dumps({"error": str(exc)}),
+            return Response(
+                content=json.dumps({"error": str(exc)}),
                 status_code=500,
-                mimetype="application/json",
+                media_type="application/json",
             )
 
     _handler.__name__ = f"handler_{function_name}"

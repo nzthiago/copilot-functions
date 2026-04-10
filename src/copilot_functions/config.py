@@ -169,7 +169,7 @@ def substitute_env_vars_in_text(text: str) -> str:
     If the referenced environment variable is not set, the original
     reference is left unchanged (fail-open).
 
-    Text inside fenced code blocks (\`\`\`...\`\`\`) is left untouched
+    Text inside fenced code blocks (``````...``````) is left untouched
     so that documentation examples are not accidentally altered.
     """
 
