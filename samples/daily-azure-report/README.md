@@ -1,6 +1,6 @@
 # Daily Azure Report
 
-A timer-triggered agent that lists Azure resources created or changed in the last 24 hours and emails a summary report. Uses a custom tool for querying Azure Resource Manager and the Office 365 connector for sending email.
+A multi-agent Azure Functions app that monitors your Azure subscription. Includes a timer-triggered agent that emails a daily resource change report and an HTTP-triggered agent that returns a structured resource summary as JSON.
 
 | Trigger | Custom Tools | Connectors | MCP Servers | Skills | Sandbox | Chat UI |
 |---|---|---|---|---|---|---|
@@ -8,11 +8,13 @@ A timer-triggered agent that lists Azure resources created or changed in the las
 
 ## Features
 
-- **Timer trigger** — runs daily at 15:00 UTC
-- **Custom `azure_rest` tool** — makes authenticated ARM REST API calls using the function app's managed identity to list resources
+- **Timer trigger** — `daily_azure_report_agent` runs daily at 15:00 UTC, emails a report of resources created or changed in the last 24 hours
+- **HTTP trigger** — `resource_summary_agent` at `POST /resource-summary` returns a structured JSON summary of all resources by type and location
+- **Custom `azure_rest` tool** — makes authenticated ARM REST API calls using the function app's managed identity, with JMESPath query support
 - **Office 365 connector** — sends the report via email
 - **Microsoft Learn MCP server** — gives the agent access to Azure documentation for looking up correct API paths and versions
 - **`azure-resources` skill** — packages ARM REST API knowledge (paths, api-versions, tips) so the agent instructions can focus on the job, not the technical details
+- **Interactive chat UI** — `main.agent.md` enables the built-in chat interface for ad-hoc Azure queries
 - **Variable substitution** — subscription ID and recipient email configured via environment variables, resolved at load time in the agent instructions
 
 ## Prerequisites
@@ -76,15 +78,26 @@ A timer-triggered agent that lists Azure resources created or changed in the las
 
 ## How It Works
 
-- [`daily_azure_report.agent.md`](src/daily_azure_report.agent.md) defines the agent with a timer trigger, a custom tool, Office 365 connector tools, and an external MCP server
-- [`tools/azure_rest.py`](src/tools/azure_rest.py) is a custom tool that makes authenticated requests to the Azure Resource Manager REST API using the function app's managed identity. It accepts any ARM API path and HTTP method — RBAC on the identity controls what operations are allowed.
-- [`mcp.json`](src/mcp.json) configures the Microsoft Learn MCP server, giving the agent access to Azure documentation for looking up correct API paths and versions.
-- [`skills/azure-resources/SKILL.md`](src/skills/azure-resources/SKILL.md) packages ARM REST API knowledge — common paths, api-versions, and usage tips — so the agent instructions can stay focused on the task rather than implementation details.
-- The `tools_from_connections` frontmatter references the Office 365 API Connection. At runtime, the framework discovers all available actions on the connector and exposes them as tools the agent can call.
+### Agents
+
+- [`daily_azure_report.agent.md`](src/daily_azure_report.agent.md) — timer-triggered agent that lists resources changed in the last 24 hours and emails a report
+- [`resource_summary.agent.md`](src/resource_summary.agent.md) — HTTP-triggered agent at `POST /resource-summary` that returns a structured JSON summary of resources by type and location
+- [`main.agent.md`](src/main.agent.md) — interactive chat agent for ad-hoc Azure queries via the built-in UI
+
+### Shared capabilities
+
+- [`tools/azure_rest.py`](src/tools/azure_rest.py) — custom tool for authenticated ARM REST API calls with JMESPath query filtering
+- [`mcp.json`](src/mcp.json) — Microsoft Learn MCP server for Azure documentation lookups
+- [`skills/azure-resources/SKILL.md`](src/skills/azure-resources/SKILL.md) — ARM REST API knowledge (paths, api-versions, tips)
+- The `tools_from_connections` frontmatter references the Office 365 API Connection for sending email
 - When the timer fires, the agent:
   1. Calls the `azure_rest` tool to list resources in the subscription
   2. Filters for resources created or modified in the last 24 hours
   3. Formats a summary report as an HTML email
   4. Sends the report to the configured recipient via the Office 365 connector
+- The HTTP agent at `/resource-summary` accepts a JSON body with `subscription_id` and returns a structured summary:
+  ```json
+  {"total_resources": 239, "by_type": {...}, "by_location": {...}}
+  ```
 - `$SUBSCRIPTION_ID` and `$TO_EMAIL` in the agent instructions are replaced with actual values at load time (via environment variable substitution)
 - `SUBSCRIPTION_ID` is automatically set from the deployment subscription — no manual input needed
