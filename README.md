@@ -13,7 +13,7 @@ Define your agent's behavior in a `.agent.md` file, add skills as knowledge modu
 Install directly from the release URL:
 
 ```bash
-pip install https://github.com/anthonychu/copilot-functions/releases/download/v0.4.1/copilot_functions-0.4.1-py3-none-any.whl
+pip install https://github.com/anthonychu/copilot-functions/releases/download/v0.4.2/copilot_functions-0.4.2-py3-none-any.whl
 ```
 
 ### From the GitHub repo
@@ -28,7 +28,7 @@ Connector tools (Teams, Office 365, SQL, Salesforce, etc.) require an optional e
 
 ```bash
 # From release URL
-pip install "copilot-functions[connectors] @ https://github.com/anthonychu/copilot-functions/releases/download/v0.4.1/copilot_functions-0.4.1-py3-none-any.whl"
+pip install "copilot-functions[connectors] @ https://github.com/anthonychu/copilot-functions/releases/download/v0.4.2/copilot_functions-0.4.2-py3-none-any.whl"
 
 # From repo
 pip install "copilot-functions[connectors] @ git+https://github.com/anthonychu/copilot-functions.git"
@@ -92,7 +92,7 @@ app = create_function_app()
 ### 4. Create `requirements.txt`
 
 ```
-https://github.com/anthonychu/copilot-functions/releases/download/v0.4.1/copilot_functions-0.4.1-py3-none-any.whl
+https://github.com/anthonychu/copilot-functions/releases/download/v0.4.2/copilot_functions-0.4.2-py3-none-any.whl
 ```
 
 Or use any other install method from the [Installation](#installation) section.
@@ -306,7 +306,7 @@ pip install -e ".[connectors]"
 # Build a wheel
 pip install build
 python -m build --wheel
-# Output: dist/copilot_functions-0.4.1-py3-none-any.whl
+# Output: dist/copilot_functions-0.4.2-py3-none-any.whl
 ```
 
 ## Contributing
