@@ -308,8 +308,6 @@ Pass `x-ms-session-id` header to continue a conversation across requests. If omi
 
 An MCP-compatible endpoint at `/runtime/webhooks/mcp` that any MCP client (VS Code, Claude Desktop, etc.) can connect to. Requires the MCP extension system key in the `x-functions-key` header when deployed.
 
-> **Storage required:** The MCP server and non-HTTP triggers require Azure Storage. Locally, run [Azurite](#5-start-azurite-local-storage-emulator). If you only need the HTTP chat endpoints, you can skip storage by setting `AzureWebJobsStorage` to `""`.
-
 ### Without `main.agent.md`
 
 If there's no `main.agent.md`, the HTTP chat, MCP, and UI endpoints are all disabled. The app only runs triggered functions.
