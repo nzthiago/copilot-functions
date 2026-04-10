@@ -168,6 +168,13 @@ trigger:
 
 logger: true               # optional, default true
 substitute_variables: true # optional, default true — inline $VAR / %VAR% replacement in body
+
+# For HTTP-triggered agents: expected response format
+response_example: |        # optional — agent returns structured JSON matching this example
+  {
+    "summary": "A brief summary",
+    "keywords": ["keyword1", "keyword2"]
+  }
 ---
 
 Agent instructions in markdown...
@@ -195,9 +202,37 @@ This applies to all trigger types, including timers (whose data includes fields 
 
 | Format | Resolves to | Example |
 |---|---|---|
+| `http_trigger` | `app.route(...)` with structured JSON response | `http_trigger` |
 | No dots | `app.<type>(...)` | `timer_trigger`, `queue_trigger` |
 | Dots | Connector library method | `teams.new_channel_message_trigger` |
 | `connectors.` prefix | Explicit connector method | `connectors.generic_trigger` |
+
+### HTTP-triggered agents
+
+HTTP-triggered agents expose REST API endpoints that accept JSON input and return structured JSON output. Use `response_example` in the frontmatter to define the expected response format:
+
+```yaml
+---
+name: Summarize
+trigger:
+  type: http_trigger
+  route: summarize
+  methods: ["POST"]
+  auth_level: FUNCTION     # ANONYMOUS | FUNCTION | ADMIN (default: FUNCTION)
+response_example: |
+  {
+    "summary": "A brief summary of the content",
+    "keywords": ["keyword1", "keyword2"],
+    "sentiment": "positive"
+  }
+---
+
+Analyze the provided content and return a structured summary.
+```
+
+The agent receives the HTTP request body as input and is instructed to return JSON matching the example. If `response_example` is omitted, the raw agent text is returned as `text/plain`.
+
+`response_schema` (JSON Schema) is also supported as an alternative to `response_example` for advanced use cases.
 
 ### Environment variable substitution
 

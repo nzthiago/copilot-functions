@@ -196,6 +196,8 @@ def _register_triggered_agents(app: func.FunctionApp, app_root: Path) -> None:
                 app, function_name, agent_name,
                 trigger_type, trigger_params, content, should_log,
                 sandbox_tools=agent_sandbox_tools,
+                response_example=metadata.get("response_example"),
+                response_schema=metadata.get("response_schema"),
             )
 
 
@@ -208,8 +210,20 @@ def _register_builtin_agent(
     prompt: str,
     should_log: bool,
     sandbox_tools: Optional[list] = None,
+    response_example: Optional[str] = None,
+    response_schema: Optional[dict] = None,
 ) -> None:
     """Register a triggered agent using a built-in Azure Functions trigger."""
+
+    # HTTP triggers use a dedicated handler that returns func.HttpResponse
+    if trigger_type == "http_trigger":
+        _register_http_agent(
+            app, function_name, agent_name, trigger_params, prompt,
+            should_log, sandbox_tools=sandbox_tools,
+            response_example=response_example, response_schema=response_schema,
+        )
+        return
+
     # Get the decorator method from the FunctionApp
     decorator_fn = getattr(app, trigger_type, None)
     if decorator_fn is None:
@@ -232,6 +246,48 @@ def _register_builtin_agent(
         logging.info(f"Registered '{function_name}' ({trigger_type}) — {agent_name}")
     except Exception as exc:
         logging.error(f"Failed to register '{function_name}' ({trigger_type}): {exc}")
+
+
+_AUTH_LEVEL_MAP = {
+    "anonymous": func.AuthLevel.ANONYMOUS,
+    "function": func.AuthLevel.FUNCTION,
+    "admin": func.AuthLevel.ADMIN,
+}
+
+
+def _register_http_agent(
+    app: func.FunctionApp,
+    function_name: str,
+    agent_name: str,
+    trigger_params: Dict[str, Any],
+    prompt: str,
+    should_log: bool,
+    sandbox_tools: Optional[list] = None,
+    response_example: Optional[str] = None,
+    response_schema: Optional[dict] = None,
+) -> None:
+    """Register an HTTP-triggered agent using app.route()."""
+    route = trigger_params.get("route")
+    if not route:
+        logging.warning(f"Skipping '{function_name}': http_trigger requires 'route'")
+        return
+
+    methods = trigger_params.get("methods", ["POST"])
+    auth_str = str(trigger_params.get("auth_level", "FUNCTION")).lower()
+    auth_level = _AUTH_LEVEL_MAP.get(auth_str, func.AuthLevel.FUNCTION)
+
+    handler = _make_http_agent_handler(
+        function_name, agent_name, should_log,
+        sandbox_tools=sandbox_tools, agent_instructions=prompt,
+        response_example=response_example, response_schema=response_schema,
+    )
+
+    try:
+        decorated = app.route(route=route, methods=methods, auth_level=auth_level)(handler)
+        app.function_name(name=function_name)(decorated)
+        logging.info(f"Registered HTTP agent '{function_name}' at /{route} ({methods}) — {agent_name}")
+    except Exception as exc:
+        logging.error(f"Failed to register HTTP agent '{function_name}': {exc}")
 
 
 def _register_connector_agent(
@@ -342,6 +398,108 @@ def _make_agent_handler(
                 )
         except Exception as exc:
             logging.exception(f"Agent '{function_name}' failed: {exc}")
+
+    _handler.__name__ = f"handler_{function_name}"
+    return _handler
+
+
+def _extract_json_from_response(text: str) -> str:
+    """Extract JSON from an agent response, stripping markdown code fences if present."""
+    stripped = text.strip()
+    # Try to extract from ```json ... ``` or ``` ... ```
+    fence_match = re.search(r"```(?:json)?\s*\n(.*?)```", stripped, re.DOTALL)
+    if fence_match:
+        return fence_match.group(1).strip()
+    return stripped
+
+
+def _make_http_agent_handler(
+    function_name: str,
+    agent_name: str,
+    should_log: bool,
+    sandbox_tools: Optional[list] = None,
+    agent_instructions: Optional[str] = None,
+    response_example: Optional[str] = None,
+    response_schema: Optional[dict] = None,
+):
+    """Create an async handler for an HTTP-triggered agent that returns structured JSON."""
+    async def _handler(req: func.HttpRequest) -> func.HttpResponse:
+        logging.info(f"HTTP agent '{function_name}' triggered: {req.method} {req.url}")
+
+        try:
+            # Parse request body
+            try:
+                body = req.get_json()
+                body_json = json.dumps(body, ensure_ascii=False, default=str)
+            except ValueError:
+                body_text = req.get_body().decode("utf-8", errors="replace")
+                body_json = body_text if body_text else "{}"
+
+            # Build prompt
+            parts = []
+            if agent_instructions:
+                parts.append(agent_instructions)
+
+            # Add response format instructions
+            if response_example:
+                parts.append(
+                    "You MUST respond with ONLY a valid JSON object (no markdown, no explanation, no code fences). "
+                    f"Your response must match this example format:\n```json\n{response_example}\n```"
+                )
+            elif response_schema:
+                schema_str = json.dumps(response_schema, indent=2)
+                parts.append(
+                    "You MUST respond with ONLY a valid JSON object (no markdown, no explanation, no code fences). "
+                    f"Your response must conform to this JSON Schema:\n```json\n{schema_str}\n```"
+                )
+
+            parts.append(f"HTTP request data:\n```json\n{body_json}\n```")
+            prompt = "\n\n".join(parts)
+
+            result = await run_copilot_agent(prompt, sandbox_tools=sandbox_tools)
+
+            if should_log:
+                logging.info(
+                    "HTTP agent '%s' response: %s",
+                    function_name,
+                    json.dumps(
+                        {"session_id": result.session_id, "response": result.content[:500]},
+                        ensure_ascii=False, default=str,
+                    ),
+                )
+
+            # If a response format was specified, parse as JSON
+            if response_example or response_schema:
+                extracted = _extract_json_from_response(result.content)
+                try:
+                    parsed = json.loads(extracted)
+                    return func.HttpResponse(
+                        body=json.dumps(parsed, ensure_ascii=False),
+                        status_code=200,
+                        mimetype="application/json",
+                    )
+                except json.JSONDecodeError as je:
+                    logging.warning(f"HTTP agent '{function_name}' returned invalid JSON: {je}")
+                    return func.HttpResponse(
+                        body=json.dumps({"error": "Agent returned invalid JSON", "raw_response": result.content}),
+                        status_code=500,
+                        mimetype="application/json",
+                    )
+            else:
+                # No schema — return raw text
+                return func.HttpResponse(
+                    body=result.content,
+                    status_code=200,
+                    mimetype="text/plain",
+                )
+
+        except Exception as exc:
+            logging.exception(f"HTTP agent '{function_name}' failed: {exc}")
+            return func.HttpResponse(
+                body=json.dumps({"error": str(exc)}),
+                status_code=500,
+                mimetype="application/json",
+            )
 
     _handler.__name__ = f"handler_{function_name}"
     return _handler
