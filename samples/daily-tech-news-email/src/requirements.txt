@@ -1,1 +1,1 @@
-copilot-functions[connectors] @ https://github.com/anthonychu/copilot-functions/releases/download/v0.6.0/copilot_functions-0.6.0-py3-none-any.whl
+copilot-functions[connectors] @ https://github.com/anthonychu/copilot-functions/releases/download/v0.6.1/copilot_functions-0.6.1-py3-none-any.whl
