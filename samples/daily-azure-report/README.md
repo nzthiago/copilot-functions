@@ -76,6 +76,72 @@ A multi-agent Azure Functions app that monitors your Azure subscription. Include
      -d '{}'
    ```
 
+## Run Locally
+
+Follow the [shared local development guide](../README.md#run-locally) in the samples directory. This sample requires Azure credentials and email configuration.
+
+### Local settings
+
+Required:
+
+- `GITHUB_TOKEN` (see shared guide)
+- `SUBSCRIPTION_ID`: Azure subscription ID (for querying resources)
+- `TO_EMAIL`: recipient email address
+- `O365_CONNECTION_ID`: Office 365 connector ID
+
+Optional:
+
+- `ACA_SESSION_POOL_ENDPOINT`: if set, enables code execution features; if empty, agents work but lose advanced capabilities
+
+Without `SUBSCRIPTION_ID`:
+
+- The `azure_rest` tool cannot authenticate to query Azure resources
+- Both timer and HTTP agents fail
+
+Without `O365_CONNECTION_ID`:
+
+- The timer agent cannot send the daily report email
+
+### Testing locally
+
+**Trigger the daily report manually:**
+
+**Bash:**
+
+```bash
+curl -X POST http://localhost:7071/admin/functions/daily_azure_report_agent \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+**PowerShell:**
+
+```powershell
+Invoke-WebRequest -Uri "http://localhost:7071/admin/functions/daily_azure_report_agent" `
+  -Method POST `
+  -ContentType "application/json" `
+  -Body '{}'
+```
+
+**Query resources via HTTP:**
+
+**Bash:**
+
+```bash
+curl -X POST http://localhost:7071/resource-summary \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+**PowerShell:**
+
+```powershell
+Invoke-WebRequest -Uri "http://localhost:7071/resource-summary" `
+  -Method POST `
+  -ContentType "application/json" `
+  -Body '{}'
+```
+
 ## How It Works
 
 ### Agents
@@ -96,8 +162,10 @@ A multi-agent Azure Functions app that monitors your Azure subscription. Include
   3. Formats a summary report as an HTML email
   4. Sends the report to the configured recipient via the Office 365 connector
 - The HTTP agent at `/resource-summary` accepts a JSON body with `subscription_id` and returns a structured summary:
+
   ```json
   {"total_resources": 239, "by_type": {...}, "by_location": {...}}
   ```
+
 - `$SUBSCRIPTION_ID` and `$TO_EMAIL` in the agent instructions are replaced with actual values at load time (via environment variable substitution)
 - `SUBSCRIPTION_ID` is automatically set from the deployment subscription — no manual input needed

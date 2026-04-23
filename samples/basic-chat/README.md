@@ -47,6 +47,24 @@ An HTTP chat agent with a built-in web UI, streaming API, MCP server endpoint, a
 
    Navigate to the Function App URL shown in the deployment output (`https://<app-name>.azurewebsites.net/`).
 
+## Run Locally
+
+Follow the [shared local development guide](../README.md#run-locally) in the samples directory. This sample has minimal additional requirements.
+
+### Local settings
+
+- `GITHUB_TOKEN`: required (see shared guide)
+- `ACA_SESSION_POOL_ENDPOINT`: optional; if empty, chat works but code execution (Python/Playwright) is unavailable
+
+### Testing endpoints
+
+Once `func start` is running:
+
+- **Chat UI:** `http://localhost:7071/`
+- **Chat API:** `POST http://localhost:7071/agent/chat` with JSON body `{"prompt": "..."}`
+- **Streaming API:** `POST http://localhost:7071/agent/chatstream` (Server-Sent Events)
+- **MCP webhook:** `http://localhost:7071/runtime/webhooks/mcp` (for VS Code, Claude Desktop)
+
 ## How It Works
 
 - [`main.agent.md`](src/main.agent.md) defines the agent with code execution sandbox support

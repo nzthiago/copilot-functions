@@ -477,7 +477,7 @@
 			</div>
 			<div class="field">
 				<label for="keyInput">Function key</label>
-				<input id="keyInput" type="password" placeholder="Enter your key" />
+				<input id="keyInput" type="password" placeholder="Enter your key (optional on localhost)" />
 			</div>
 			<div class="settings-actions">
 				<button id="cancelSettingsBtn" type="button">Cancel</button>
@@ -1036,6 +1036,27 @@
 			return true;
 		}
 
+		function isLocalBaseUrl(baseUrl) {
+			if (!baseUrl) return false;
+			try {
+				const parsed = new URL(baseUrl);
+				const hostname = (parsed.hostname || "").toLowerCase();
+				if (!hostname) return false;
+				return (
+					hostname === "localhost" ||
+					hostname === "127.0.0.1" ||
+					hostname === "::1" ||
+					hostname.endsWith(".localhost")
+				);
+			} catch {
+				return false;
+			}
+		}
+
+		function requiresFunctionKey(baseUrl) {
+			return !isLocalBaseUrl(baseUrl);
+		}
+
 		function saveSettings() {
 			state.baseUrl = baseUrlInputEl.value.trim().replace(/\/+$/, "");
 			state.key = keyInputEl.value.trim();
@@ -1046,8 +1067,8 @@
 				return false;
 			}
 
-			if (!state.key) {
-				setStatus("Key is required.", true);
+			if (requiresFunctionKey(state.baseUrl) && !state.key) {
+				setStatus("Key is required for non-localhost URLs.", true);
 				keyInputEl.focus();
 				return false;
 			}
@@ -1097,7 +1118,8 @@
 		}
 
 		async function sendMessage(prompt, callbacks = {}) {
-			const endpoint = `${state.baseUrl}/agent/chatstream?code=${encodeURIComponent(state.key)}`;
+			const authQuery = state.key ? `?code=${encodeURIComponent(state.key)}` : "";
+			const endpoint = `${state.baseUrl}/agent/chatstream${authQuery}`;
 			const headers = {
 				"Content-Type": "application/json",
 				"Accept": "text/event-stream"
@@ -1333,7 +1355,7 @@
 		composerEl.addEventListener("submit", async (event) => {
 			event.preventDefault();
 
-			if (!state.baseUrl || !state.key) {
+			if (!state.baseUrl || (requiresFunctionKey(state.baseUrl) && !state.key)) {
 				showSettings(true);
 				setStatus("Set your base URL and key before chatting.", true);
 				return;
@@ -1468,7 +1490,7 @@
 
 		loadSettings();
 		loadSettingsFromHash();
-		if (!state.baseUrl || !state.key) {
+		if (!state.baseUrl || (requiresFunctionKey(state.baseUrl) && !state.key)) {
 			state.baseUrl = state.baseUrl || defaultBaseUrl;
 			showSettings(true);
 			setStatus("Enter your base URL and key to begin.");

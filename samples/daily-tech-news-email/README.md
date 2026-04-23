@@ -70,6 +70,51 @@ A timer-triggered agent that fetches the day's top tech news headlines, summariz
      -d '{}'
    ```
 
+## Run Locally
+
+Follow the [shared local development guide](../README.md#run-locally) in the samples directory. This sample requires additional setup for timers and email delivery.
+
+### Local settings
+
+Required:
+
+- `GITHUB_TOKEN` (see shared guide)
+- `ACA_SESSION_POOL_ENDPOINT`: needed for code execution (fetching news)
+- `TO_EMAIL`: recipient email address
+- `O365_CONNECTION_ID`: Office 365 connector ID
+
+Without `ACA_SESSION_POOL_ENDPOINT`:
+
+- The timer still fires, but the agent cannot fetch news (execute_python unavailable)
+- Email sending may fail due to missing connector tools
+
+Without `O365_CONNECTION_ID`:
+
+- The agent cannot send email
+
+### Testing locally
+
+Since this is timer-triggered, you can manually invoke it:
+
+**Bash:**
+
+```bash
+# In a new terminal, get the function host's endpoint
+# Timer functions are triggered via HTTP admin endpoint
+curl -X POST http://localhost:7071/admin/functions/daily_tech_news_agent \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+**PowerShell:**
+
+```powershell
+Invoke-WebRequest -Uri "http://localhost:7071/admin/functions/daily_tech_news_agent" `
+  -Method POST `
+  -ContentType "application/json" `
+  -Body '{}'
+```
+
 ## How It Works
 
 - [`daily_tech_news.agent.md`](src/daily_tech_news.agent.md) defines the agent with a timer trigger, code execution sandbox, and Office 365 connector tools
