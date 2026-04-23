@@ -108,9 +108,9 @@ Or use any other install method from the [Installation](#installation) section.
 The MCP server endpoint and non-HTTP triggers (timer, queue, blob, etc.) require a storage account. Locally, use [Azurite](https://learn.microsoft.com/azure/storage/common/storage-use-azurite) via Docker:
 
 ```bash
-docker run -d -p 10000:10000 -p 10001:10001 -p 10002:10002 \
+docker run -d --name azurite -p 10000:10000 -p 10001:10001 -p 10002:10002 \
   mcr.microsoft.com/azure-storage/azurite \
-  azurite --skipApiVersionCheck
+  azurite --skipApiVersionCheck --blobHost 0.0.0.0 --queueHost 0.0.0.0 --tableHost 0.0.0.0
 ```
 
 Then set the storage connection string in `local.settings.json`:
