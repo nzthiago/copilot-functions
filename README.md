@@ -120,10 +120,13 @@ Then set the storage connection string in `local.settings.json`:
   "IsEncrypted": false,
   "Values": {
     "FUNCTIONS_WORKER_RUNTIME": "python",
-    "AzureWebJobsStorage": "UseDevelopmentStorage=true"
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "PYTHON_ISOLATE_WORKER_DEPENDENCIES": "1"
   }
 }
 ```
+
+> **Note:** `PYTHON_ISOLATE_WORKER_DEPENDENCIES=1` makes the Functions Python worker prefer your venv's packages over the bundled ones. Some versions of Azure Functions Core Tools ship a bundled `azure-functions` package that pre-dates the `mcp_tool_trigger` decorator, which causes `func start` to fail with `AttributeError: 'FunctionApp' object has no attribute 'mcp_tool_trigger'` during indexing. Setting this flag uses the GA `azure-functions` from your venv instead. See [#6](https://github.com/anthonychu/azure-functions-agents/issues/6) for details.
 
 ### 6. Run locally
 
